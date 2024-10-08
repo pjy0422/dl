@@ -1,3 +1,4 @@
-data/*
+gan/data/*
 *.png
 *.jpg
+gan/data/MNIST/raw/*

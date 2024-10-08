@@ -1,0 +1,13 @@
+model:
+    latent_dim: 100
+    dropout: 0.2
+
+training:
+    batch_size:128
+    epochs: 100
+    lr: 0.02
+
+
+optimizer_g:
+    name: SGD
+    

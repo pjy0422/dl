@@ -130,16 +130,14 @@ class Generator(nn.Module):
     ) -> None:
         super(Generator, self).__init__()
         self.latent_dim = latent_dim
-        self.dropout = dropout
 
         self.model = nn.Sequential(
             nn.Linear(self.latent_dim, 2 * self.latent_dim),
             nn.ReLU(),
-            nn.Dropout(self.dropout) if self.dropout > 0 else nn.Identity(),
             nn.Linear(2 * self.latent_dim, 2 * self.latent_dim),
-            nn.ReLU(),
-            nn.Dropout(self.dropout) if self.dropout > 0 else nn.Identity(),
+            nn.Relu(),
             nn.Linear(2 * self.latent_dim, output_dim),
+            nn.Sigmoid(),
         )
 
     def forward(self, z) -> torch.Tensor:
@@ -151,6 +149,39 @@ class Generator(nn.Module):
         """
 
         return self.model(z)
+
+
+class MaxOut(nn.Module):
+    def __init__(self, input_dim, num_pieces: int = 5):
+        """
+        Maxout layer
+
+        Args:
+            input_dim (int): Dimension of the input features.
+            num_pieces (int): Number of linear pieces to compute max over.
+        """
+        super(MaxOut, self).__init__()
+        self.input_dim = input_dim
+        self.num_pieces = num_pieces
+
+        self.fc = nn.Linear(
+            in_features=input_dim, out_features=input_dim * num_pieces
+        )
+
+    def forward(self, x):
+        """
+        Forward pass of the Maxout layer
+
+        Args:
+            x: Input tensor of shape (batch_size, input_dim)
+
+        Returns:
+            Tensor of shape (batch_size, input_dim)
+        """
+
+        output = self.fc(x)
+        output = output.view(output.size(0), self.input_dim, self.num_pieces)
+        return torch.max(output, dim=2)[0]
 
 
 class Discriminator(nn.Module):
@@ -188,11 +219,13 @@ class Discriminator(nn.Module):
 
 
 def main():
-    mnist = CustomDatasetLoader(
-        dataset_name="mnist", batch_size=64, train=True
-    )
-    train_loader = mnist.train_loader
-    val_loader = mnist.val_loader
+    mnist = CustomDatasetLoader(dataset_name="mnist", batch_size=64)
+    data = mnist.train_loader
+    i, batch = next(enumerate(data))
+    print(i, batch[0].shape, batch[1].shape)
+    model = MaxOut(input_dim=28 * 28)
+    output = model(batch[0].view(-1, 28 * 28))
+    print(output.shape)
 
 
 if __name__ == "__main__":
