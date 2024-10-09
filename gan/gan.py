@@ -1,187 +1,29 @@
-import matplotlib.pyplot as plt
+import mlflow
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
-from torch.utils.data import DataLoader, random_split
-from torchvision import transforms
-from torchvision.datasets import CIFAR10, MNIST, CelebA
-
-
-class CustomDatasetLoader:
-    def __init__(
-        self,
-        dataset_name: str = "mnist",
-        batch_size: int = 64,
-        train: bool = True,
-        val_split: float = 0.1,
-        download: bool = True,
-        num_workers: int = 4,
-        transform: transforms.Compose = None,
-    ) -> None:
-        self.dataset_name = dataset_name.lower()
-        self.batch_size = batch_size
-        self.train = train
-        self.val_split = val_split
-        self.download = download
-        self.num_workers = num_workers
-        self.transform = transform or self._get_transform()
-
-        self.dataset = self._get_dataset()
-
-        if self.train and self.val_split > 0:
-            self.train_data, self.val_data = self._split_dataset()
-
-        self.train_loader = None
-        self.val_loader = None
-        self.test_loader = None
-
-        if self.train:
-            self.train_loader, self.val_loader = self._get_train_val_loaders()
-        else:
-            self.test_loader = self._get_test_loader()
-
-    def _get_transform(self) -> transforms.Compose:
-        if self.dataset_name == "cifar10":
-            return transforms.Compose(
-                [
-                    transforms.ToTensor(),
-                    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
-                ]
-            )
-        elif self.dataset_name == "mnist":
-            return transforms.Compose(
-                [transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))]
-            )
-        elif self.dataset_name == "celeba":
-            return transforms.Compose(
-                [
-                    transforms.CenterCrop(178),  # Fixed typo
-                    transforms.Resize(64),
-                    transforms.ToTensor(),
-                    transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
-                ]
-            )
-        else:
-            raise ValueError(
-                f"Unknown dataset {self.dataset_name}. Supported datasets: 'mnist', 'cifar10', 'celeba'."
-            )
-
-    def _get_dataset(self):
-        if self.dataset_name == "cifar10":
-            return CIFAR10(
-                root="./data",
-                train=self.train,
-                download=self.download,
-                transform=self.transform,
-            )
-        elif self.dataset_name == "mnist":
-            return MNIST(
-                root="./data",
-                train=self.train,
-                download=self.download,
-                transform=self.transform,
-            )
-        elif self.dataset_name == "celeba":
-            return CelebA(
-                root="./data",
-                split="train" if self.train else "test",
-                download=self.download,
-                transform=self.transform,
-            )
-        else:
-            raise ValueError(f"Unknown dataset {self.dataset_name}.")
-
-    def _split_dataset(self) -> tuple:
-        val_size = int(len(self.dataset) * self.val_split)
-        train_size = len(self.dataset) - val_size
-        return random_split(self.dataset, [train_size, val_size])
-
-    def _get_train_val_loaders(self) -> tuple:
-        train_loader = DataLoader(
-            self.train_data,
-            batch_size=self.batch_size,
-            shuffle=True,
-            num_workers=self.num_workers,
-        )
-        val_loader = DataLoader(
-            self.val_data,
-            batch_size=self.batch_size,
-            shuffle=False,
-            num_workers=self.num_workers,
-        )
-        return train_loader, val_loader
-
-    def _get_test_loader(self) -> DataLoader:
-        return DataLoader(
-            self.dataset,
-            batch_size=self.batch_size,
-            shuffle=False,
-            num_workers=self.num_workers,
-        )
+from maxout import MaxOut
 
 
 class Generator(nn.Module):
     def __init__(
-        self,
-        latent_dim: int = 256,
-        dropout: float = 0.2,
-        output_dim: int = 28 * 28,
+        self, hidden_dim: int = 256, output_dim: int = 28 * 28
     ) -> None:
         super(Generator, self).__init__()
-        self.latent_dim = latent_dim
+        self.hidden_dim = hidden_dim
+        self.model = self._build_model(output_dim)
 
-        self.model = nn.Sequential(
-            nn.Linear(self.latent_dim, 2 * self.latent_dim),
+    def _build_model(self, output_dim: int) -> nn.Sequential:
+        return nn.Sequential(
+            nn.Linear(self.hidden_dim, 2 * self.hidden_dim),
             nn.ReLU(),
-            nn.Linear(2 * self.latent_dim, 2 * self.latent_dim),
-            nn.Relu(),
-            nn.Linear(2 * self.latent_dim, output_dim),
+            nn.Linear(2 * self.hidden_dim, 2 * self.hidden_dim),
+            nn.ReLU(),
+            nn.Linear(2 * self.hidden_dim, output_dim),
             nn.Sigmoid(),
         )
 
-    def forward(self, z) -> torch.Tensor:
-        """
-        args:
-            z: torch.Tensor - expected shape [batch_size, latent_dim] gaussian noise
-        return:
-            torch.Tensor - generated image
-        """
-
+    def forward(self, z: torch.Tensor) -> torch.Tensor:
         return self.model(z)
-
-
-class MaxOut(nn.Module):
-    def __init__(self, input_dim, num_pieces: int = 5):
-        """
-        Maxout layer
-
-        Args:
-            input_dim (int): Dimension of the input features.
-            num_pieces (int): Number of linear pieces to compute max over.
-        """
-        super(MaxOut, self).__init__()
-        self.input_dim = input_dim
-        self.num_pieces = num_pieces
-
-        self.fc = nn.Linear(
-            in_features=input_dim, out_features=input_dim * num_pieces
-        )
-
-    def forward(self, x):
-        """
-        Forward pass of the Maxout layer
-
-        Args:
-            x: Input tensor of shape (batch_size, input_dim)
-
-        Returns:
-            Tensor of shape (batch_size, input_dim)
-        """
-
-        output = self.fc(x)
-        output = output.view(output.size(0), self.input_dim, self.num_pieces)
-        return torch.max(output, dim=2)[0]
 
 
 class Discriminator(nn.Module):
@@ -190,43 +32,169 @@ class Discriminator(nn.Module):
         input_dim: int = 28 * 28,
         latent_dim: int = 256,
         dropout: float = 0.2,
+        num_pieces: int = 5,
     ) -> None:
         super(Discriminator, self).__init__()
-        self.input_dim = input_dim
-        self.latent_dim = latent_dim
-        self.dropout = dropout
+        self.model = self._build_model(
+            input_dim, latent_dim, dropout, num_pieces
+        )
 
-        self.model = nn.Sequential(
-            nn.Linear(self.input_dim, self.latent_dim),
-            nn.ReLU(),
-            nn.Dropout(self.dropout) if self.dropout > 0 else nn.Identity(),
-            nn.Linear(self.latent_dim, self.latent_dim),
-            nn.ReLU(),
-            nn.Dropout(self.dropout) if self.dropout > 0 else nn.Identity(),
-            nn.Linear(self.latent_dim, 1),
+    def _build_model(
+        self, input_dim: int, latent_dim: int, dropout: float, num_pieces: int
+    ) -> nn.Sequential:
+        return nn.Sequential(
+            nn.Linear(input_dim, latent_dim),
+            MaxOut(input_dim=latent_dim, num_pieces=num_pieces),
+            nn.Dropout(dropout),
+            nn.Linear(latent_dim, latent_dim),
+            MaxOut(input_dim=latent_dim, num_pieces=num_pieces),
+            nn.Dropout(dropout),
+            nn.Linear(latent_dim, 1),
             nn.Sigmoid(),
         )
 
-    def forward(self, x) -> torch.Tensor:
-        """
-        args:
-            x: torch.Tensor - expected shape [batch_size, input_dim] input data
-        return:
-            torch.Tensor - predicted value
-        """
-
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.model(x)
 
 
-def main():
-    mnist = CustomDatasetLoader(dataset_name="mnist", batch_size=64)
-    data = mnist.train_loader
-    i, batch = next(enumerate(data))
-    print(i, batch[0].shape, batch[1].shape)
-    model = MaxOut(input_dim=28 * 28)
-    output = model(batch[0].view(-1, 28 * 28))
-    print(output.shape)
+class GAN(nn.Module):
+    def __init__(self, config: dict) -> None:
+        super(GAN, self).__init__()
+        self.config = config
+        self.generator = self._init_generator()
+        self.discriminator = self._init_discriminator()
+
+    def _init_generator(self) -> Generator:
+        return Generator(
+            hidden_dim=self.config["generator"]["hidden_dim"],
+            output_dim=self._calc_output_dim(),
+        )
+
+    def _init_discriminator(self) -> Discriminator:
+        return Discriminator(
+            input_dim=self._calc_output_dim(),
+            latent_dim=self.config["discriminator"]["latent_dim"],
+            dropout=self.config["discriminator"]["dropout"],
+            num_pieces=self.config["discriminator"]["num_pieces"],
+        )
+
+    def _calc_output_dim(self) -> int:
+        return (
+            self.config["dataset"]["width"]
+            * self.config["dataset"]["height"]
+            * self.config["dataset"]["channels"]
+        )
 
 
-if __name__ == "__main__":
-    main()
+class GANTrainer:
+    def __init__(
+        self,
+        model: GAN,
+        config: dict,
+        train_dataloader: torch.utils.data.DataLoader,
+        val_dataloader: torch.utils.data.DataLoader,
+    ) -> None:
+        self.model = model
+        self.config = config
+        self.device = config["trainer"]["device"]
+        self.train_dataloader = train_dataloader
+        self.val_dataloader = val_dataloader
+        self.batch_size = config["trainer"]["batch_size"]
+
+        self.model.generator.to(self.device)
+        self.model.discriminator.to(self.device)
+
+        self.optimizer_g = self._init_optimizer(
+            self.model.generator, "generator"
+        )
+        self.optimizer_d = self._init_optimizer(
+            self.model.discriminator, "discriminator"
+        )
+
+    def _init_optimizer(self, model, model_type: str) -> torch.optim.Optimizer:
+        return torch.optim.SGD(
+            model.parameters(),
+            lr=self.config[model_type]["lr"],
+            momentum=self.config[model_type]["momentum"],
+        )
+
+    def _d_loss(self, x: torch.Tensor, z: torch.Tensor) -> torch.Tensor:
+        eps = 1e-12
+        real_loss = torch.log(self.model.discriminator(x) + eps)
+        fake_loss = torch.log(
+            1 - self.model.discriminator(self.model.generator(z)) + eps
+        )
+        return -torch.mean(real_loss + fake_loss)
+
+    def _g_loss(self, z: torch.Tensor) -> torch.Tensor:
+        eps = 1e-12
+        return -torch.mean(
+            torch.log(self.model.discriminator(self.model.generator(z)) + eps)
+        )
+
+    def _print_progress(
+        self,
+        epoch: int,
+        total_epochs: int,
+        step: int,
+        total_steps: int,
+        loss: float,
+        loss_type: str,
+    ) -> None:
+        print(
+            f"[Epoch {epoch:03d}/{total_epochs:03d}] "
+            f"Step [{step:04d}/{total_steps:04d}] | {loss_type:<12} Loss: {loss:.6f}"
+        )
+
+    def _print_epoch_summary(self, epoch: int, total_epochs: int) -> None:
+        print(f"[Epoch {epoch:03d}/{total_epochs:03d}] Completed\n" + "=" * 50)
+
+    def train_discriminator(self, epoch: int, total_epochs: int) -> None:
+        for i, (x, _) in enumerate(self.train_dataloader):
+            self.optimizer_d.zero_grad()
+
+            x = x.view(x.size(0), -1).to(self.device)
+            z = torch.randn(
+                x.size(0), self.config["generator"]["hidden_dim"]
+            ).to(self.device)
+
+            loss = self._d_loss(x, z)
+            loss.backward()
+            self.optimizer_d.step()
+
+            self._print_progress(
+                epoch,
+                total_epochs,
+                i + 1,
+                len(self.train_dataloader),
+                loss.item(),
+                "Discriminator",
+            )
+
+    def train_generator(self, epoch: int, total_epochs: int) -> None:
+        self.optimizer_g.zero_grad()
+
+        z = torch.randn(
+            self.batch_size, self.config["generator"]["hidden_dim"]
+        ).to(self.device)
+        loss = self._g_loss(z)
+        loss.backward()
+        self.optimizer_g.step()
+
+        self._print_progress(
+            epoch, total_epochs, 1, 1, loss.item(), "Generator"
+        )
+
+    def train(self) -> None:
+        torch.manual_seed(self.config["trainer"]["seed"])
+
+        total_epochs = self.config["trainer"]["epochs"]
+        for epoch in range(1, total_epochs + 1):
+            print(f"\nStarting Epoch [{epoch:03d}/{total_epochs:03d}]")
+            print("Updating Discriminator".center(50, "="))
+            self.train_discriminator(epoch, total_epochs)
+
+            print("Updating Generator".center(50, "="))
+            self.train_generator(epoch, total_epochs)
+
+            self._print_epoch_summary(epoch, total_epochs)
