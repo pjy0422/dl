@@ -132,6 +132,28 @@ class GANTrainer:
             torch.log(self.model.discriminator(self.model.generator(z)) + eps)
         )
 
+    def _gaussian_kernel(
+        self, x: torch.Tensor, x_sample: torch.Tensor, sigma: float
+    ):
+        x = x.unsqueeze(1)  # Shape: (batch_size, 1, input_dim)
+        x_sample = x_sample.unsqueeze(0)  # Shape: (1, num_samples, input_dim)
+        diffs = x - x_sample  # Broadcasting subtraction
+        distances = torch.sum(diffs**2, dim=-1)  # Squared Euclidean distances
+        return torch.exp(-distances / (2 * sigma**2))
+
+    def _parzen_window_log_likelihood(
+        self, x: torch.Tensor, x_sample: torch.Tensor, sigma: float
+    ):
+        eps = 1e-12  # Prevent log(0)
+        kernel_values = self._gaussian_kernel(
+            x, x_sample, sigma=sigma
+        )  # Shape: (batch_size, num_samples)
+        density_estimates = torch.mean(
+            kernel_values, dim=1
+        )  # Mean over generated samples
+        log_likelihood = torch.log(density_estimates + eps)
+        return torch.mean(log_likelihood)  # Average over validation data
+
     def _print_progress(
         self,
         epoch: int,
@@ -147,7 +169,8 @@ class GANTrainer:
         )
 
     def _print_epoch_summary(self, epoch: int, total_epochs: int) -> None:
-        print(f"[Epoch {epoch:03d}/{total_epochs:03d}] Completed\n" + "=" * 50)
+        print(f"[Epoch {epoch:03d}/{total_epochs:03d}] Completed")
+        print("Evaluating Model".center(50, "="))
 
     def train_discriminator(self, epoch: int, total_epochs: int) -> None:
         for i, (x, _) in enumerate(self.train_dataloader):
@@ -198,84 +221,24 @@ class GANTrainer:
             self.train_generator(epoch, total_epochs)
 
             self._print_epoch_summary(epoch, total_epochs)
+            # Evaluate after each epoch
+            self.eval()
 
+    def eval(self) -> None:
+        log_likelihoods = []
+        sigma = 0.5  # You might want to tune this
 
-def gaussian_kernel(x: torch.Tensor, x_sample: torch.Tensor, h: float, d: int):
-    x = x.unsqueeze(1)  # Add dimension for broadcasting
-    x_sample = x_sample.unsqueeze(0)  # Add dimension for broadcasting
-    diffs = x - x_sample  # Pairwise differences between x and x_sample
-    distances = torch.sum(diffs**2, dim=-1)  # Squared Euclidean distances
+        with torch.no_grad():  # Disable gradients for evaluation
+            for i, (x, _) in enumerate(self.val_dataloader):
+                x = x.view(x.size(0), -1).to(self.device)
+                z = torch.randn(
+                    x.size(0), self.config["generator"]["hidden_dim"]
+                ).to(self.device)
 
-    # Gaussian kernel
-    return torch.exp(-distances / (2 * h**2))  # No need for division by d here
+                log_likelihood = self._parzen_window_log_likelihood(
+                    x, self.model.generator(z), sigma=sigma
+                )
+                log_likelihoods.append(log_likelihood.item())
 
-
-def parzen_window_log_likelihood(
-    x: torch.Tensor, x_sample: torch.Tensor, h: float, d: int
-):
-    eps = 1e-12  # To prevent log(0)
-
-    # Compute the Gaussian kernel for all pairs of x and x_sample
-    kernel_values = gaussian_kernel(x, x_sample, h, d)
-
-    # Average the kernel values across the generated samples for each real sample
-    density_estimates = torch.mean(kernel_values, dim=1)
-
-    # Return the log-likelihood (adding epsilon to avoid log(0))
-    return torch.log(density_estimates + eps)
-
-
-def parzen_window_log_likelihood(
-    x: torch.Tensor, x_sample: torch.Tensor, h: float, d: int
-):
-    eps = 1e-12  # Small value to prevent log(0)
-
-    # Get the kernel values (probability density estimates)
-    kernel_values = gaussian_kernel(x, x_sample, h, d)
-
-    # Estimate the density as the mean of the kernel values over the generated samples
-    density_estimates = torch.mean(
-        kernel_values, dim=1
-    )  # Average over the second dimension (samples)
-
-    # Compute the log-likelihood
-    return torch.log(density_estimates + eps)
-
-
-def main():
-    config = {
-        "dataset": {"width": 28, "height": 28, "channels": 1},
-        "generator": {"hidden_dim": 256},
-        "discriminator": {
-            "latent_dim": 256,
-            "dropout": 0.2,
-            "num_pieces": 5,
-        },
-        "trainer": {
-            "device": "cuda" if torch.cuda.is_available() else "cpu",
-            "batch_size": 64,
-            "epochs": 10,
-            "lr": 0.0002,
-            "momentum": 0.5,
-            "seed": 42,
-        },
-    }
-
-    model = Generator(hidden_dim=256, output_dim=28 * 28)
-
-    input_data = torch.randn(64, 1, 28, 28)
-    latent_data = torch.randn(64, 256)
-    gen_output = model(latent_data)
-
-    x = input_data.view(input_data.size(0), -1).unsqueeze(0)
-    x_sample = gen_output.unsqueeze(1)
-
-    diffs = x - x_sample
-    print((x - x_sample).shape)
-    distances = torch.sum(diffs**2, dim=-1)
-    print(distances.shape)
-    print(parzen_window_log_likelihood(x, x_sample, 6, 784))
-
-
-if __name__ == "__main__":
-    main()
+        mean_log_likelihood = sum(log_likelihoods) / len(log_likelihoods)
+        print(f"Mean Log-Likelihood: {mean_log_likelihood:.6f}")
