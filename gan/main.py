@@ -14,8 +14,8 @@ def main():
     trainer = GANTrainer(
         model=model,
         config=config,
-        train_dataloader=train_loader,
-        val_dataloader=val_loader,
+        train_loader=train_loader,
+        val_loader=val_loader,
     )
     trainer.train()
 

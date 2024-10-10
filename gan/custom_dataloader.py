@@ -12,7 +12,7 @@ class CustomDatasetLoader:
         self.dataset_name = config["dataset"]["name"]
         self.batch_size = config["trainer"]["batch_size"]
         self.train = config["dataset"]["train"]
-        self.val_split = config["dataset"]["val_split"]
+        self.val_split = float(config["dataset"]["val_split"])
         self.download = config["dataset"]["download"]
         self.num_workers = config["dataset"]["num_workers"]
         self.transform = transform or self._get_transform()
