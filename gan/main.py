@@ -3,7 +3,7 @@ import mlflow.pytorch
 import torch
 import yaml
 from custom_dataloader import CustomDatasetLoader
-from gan import GAN, GANTrainer
+from enhanced_gan import GAN, GANTrainer
 
 
 def load_models(run_id):

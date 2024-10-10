@@ -1,20 +1,24 @@
 generator:
-    optimizer: sgd
-    lr: 0.03
-    momentum: 0.9
-    weight_decay: 5e-4
+    optimizer: adam
+    lr: 2e-4
+    betas: [0.5, 0.999]
     hidden_dim: 100
+    lr_scheduler:
+        name: StepLR
+        step_size: 50
+        gamma: 0.5
 discriminator:
-    optimizer: sgd
-    lr: 0.001
-    momentum: 0.9
-    weight_decay: 5e-4
-    num_pieces: 5
+    optimizer: adam
+    lr: 2e-4
+    betas: [0.5, 0.999]
     latent_dim: 256
-    dropout: 0.2
+    lr_scheduler:
+        name: StepLR
+        step_size: 50
+        gamma: 0.5
 trainer:
-    epochs: 400
-    batch_size: 256
+    epochs: 100
+    batch_size: 64
     seed: 42
     device: cuda
     max_k: 1
