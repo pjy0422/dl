@@ -1,5 +1,6 @@
 import os
 
+import mlflow
 import torch
 import torch.nn as nn
 from maxout import MaxOut
@@ -146,6 +147,10 @@ class GANTrainer:
         print(
             f"[Epoch {epoch:03d}] Step [{step:04d}/{total_steps:04d}] | {loss_type} Loss: {loss:.6f}"
         )
+        # Log the loss to MLflow
+        mlflow.log_metric(
+            f"{loss_type}_loss", loss, step=epoch * total_steps + step
+        )
 
     def _save_images(self, z: torch.Tensor, batches_done: int) -> None:
         gen_imgs = self.model.generator(z).detach().view(-1, 1, 28, 28)
@@ -156,6 +161,8 @@ class GANTrainer:
         save_image(
             gen_imgs, save_path, nrow=int(self.batch_size**0.5), normalize=True
         )
+        # Log the generated images to MLflow
+        mlflow.log_artifact(save_path)
 
     def train_discriminator(self, epoch: int) -> None:
         total_loss = 0.0
@@ -181,9 +188,9 @@ class GANTrainer:
                 "Discriminator",
             )
 
-        print(
-            f"Average Discriminator Loss: {total_loss / len(self.train_loader)}"
-        )
+        avg_loss = total_loss / len(self.train_loader)
+        print(f"Average Discriminator Loss: {avg_loss}")
+        mlflow.log_metric("avg_discriminator_loss", avg_loss, epoch)
 
     def train_generator(self, epoch: int) -> None:
         total_loss = 0.0
@@ -207,7 +214,9 @@ class GANTrainer:
             if batches_done % self.config["trainer"]["sample_interval"] == 0:
                 self._save_images(z, batches_done)
 
-        print(f"Average Generator Loss: {total_loss / len(self.train_loader)}")
+        avg_loss = total_loss / len(self.train_loader)
+        print(f"Average Generator Loss: {avg_loss}")
+        mlflow.log_metric("avg_generator_loss", avg_loss, epoch)
 
     def train(self) -> None:
         torch.manual_seed(self.config["trainer"]["seed"])

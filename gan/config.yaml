@@ -34,5 +34,3 @@ dataset:
 
 mlflow:
     experiment_name: GAN
-    tracking_uri: http://localhost:5000
-    artifact_location: /tmp/mlruns
