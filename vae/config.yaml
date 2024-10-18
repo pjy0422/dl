@@ -1,0 +1,13 @@
+
+dataset:
+    name: mnist
+    download: True
+    channels: 1
+    height: 28
+    width: 28
+    num_workers: 4
+    train: True
+    val_split: 0.1
+    batch_size: 64
+
+

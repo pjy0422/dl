@@ -5,3 +5,6 @@ gan/data/MNIST/raw/*
 /gan/__pycache__/*
 /gan/mlruns/*
 /images/*
+vae/data/*
+vae/__pycache__/*
+vae/mlruns/*
