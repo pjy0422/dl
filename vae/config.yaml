@@ -8,6 +8,7 @@ dataset:
     num_workers: 4
     train: True
     val_split: 0.1
-    batch_size: 64
-
+    batch_size: 256
+epochs: 10
+device: cuda
 

@@ -45,9 +45,7 @@ class CustomDatasetLoader:
                 ]
             )
         elif self.dataset_name == "mnist":
-            return transforms.Compose(
-                [transforms.ToTensor(), transforms.Normalize((0.5,), (0.5,))]
-            )
+            return transforms.Compose([transforms.ToTensor()])
         elif self.dataset_name == "celeba":
             return transforms.Compose(
                 [
