@@ -1,18 +1,14 @@
 import os
 
+import matplotlib.pyplot as plt
 import torch
-import torch.nn as nn
-import torch.nn.functional as F
-import torch.optim as optim
-import yaml
-from custom_dataloader import CustomDatasetLoader
-from model import VAE
+from clearml import Logger
 from torchvision.utils import save_image
 
 
 def train(model, train_loader, optimizer, config: dict):
-    epochs = config["epochs"]
-    device = config["device"]
+    epochs = config["model"]["epochs"]
+    device = config["model"]["device"]
     for epoch in range(epochs):
         model.train()
         train_loss = 0  # Reset at the start of each epoch
@@ -35,13 +31,25 @@ def train(model, train_loader, optimizer, config: dict):
                     f"Reconstruction Loss: {recon_loss.item():.6f}\t"
                     f"KLD Loss: {kld_loss.item():.6f}"
                 )
+            Logger.current_logger().report_scalar(
+                title="train_batch",
+                series="loss",
+                iteration=batch_idx,
+                value=loss.item(),
+            )
 
         average_loss = train_loss / len(train_loader.dataset)
         print(f"====> Epoch: {epoch} Average loss: {average_loss:.4f}")
+        Logger.current_logger().report_scalar(
+            title="train",
+            series="loss",
+            iteration=epoch,
+            value=average_loss,
+        )
 
 
 def val(model, val_loader, config: dict):
-    device = config["device"]
+    device = config["model"]["device"]
     val_loss = 0
     with torch.no_grad():
         for i, (data, _) in enumerate(val_loader):
@@ -68,19 +76,9 @@ def val(model, val_loader, config: dict):
     print(
         f"====> Validation set loss: {val_loss / len(val_loader.dataset):.4f}"
     )
-
-
-def main():
-    data = CustomDatasetLoader("config.yaml")
-    train_loader = data.train_loader
-    val_loader = data.val_loader
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    config = yaml.safe_load(open("config.yaml"))
-    model = VAE(latent_dim=128).to(device)
-    optimizer = optim.Adam(model.parameters(), lr=1e-3)
-    train(model, train_loader, optimizer, config)
-    val(model, val_loader, config)
-
-
-if __name__ == "__main__":
-    main()
+    Logger.current_logger().report_scalar(
+        "val_loss",
+        series="loss",
+        value=val_loss / len(val_loader.dataset),
+        iteration=0,
+    )

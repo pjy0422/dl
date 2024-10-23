@@ -3,8 +3,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 
-latent_dim = 30
-
 
 class VAE(nn.Module):
     def __init__(self, latent_dim=128):
