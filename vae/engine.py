@@ -2,7 +2,6 @@ import os
 
 import matplotlib.pyplot as plt
 import torch
-from clearml import Logger
 from torchvision.utils import save_image
 
 
@@ -31,21 +30,9 @@ def train(model, train_loader, optimizer, config: dict):
                     f"Reconstruction Loss: {recon_loss.item():.6f}\t"
                     f"KLD Loss: {kld_loss.item():.6f}"
                 )
-            Logger.current_logger().report_scalar(
-                title="train_batch",
-                series="loss",
-                iteration=batch_idx,
-                value=loss.item(),
-            )
 
         average_loss = train_loss / len(train_loader.dataset)
         print(f"====> Epoch: {epoch} Average loss: {average_loss:.4f}")
-        Logger.current_logger().report_scalar(
-            title="train",
-            series="loss",
-            iteration=epoch,
-            value=average_loss,
-        )
 
 
 def val(model, val_loader, config: dict):
@@ -75,10 +62,4 @@ def val(model, val_loader, config: dict):
 
     print(
         f"====> Validation set loss: {val_loss / len(val_loader.dataset):.4f}"
-    )
-    Logger.current_logger().report_scalar(
-        "val_loss",
-        series="loss",
-        value=val_loss / len(val_loader.dataset),
-        iteration=0,
     )
