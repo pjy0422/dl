@@ -191,7 +191,8 @@ with mlflow.start_run(run_name=f"META_RUN_{randomnumber}"):
 
     print("Meta-dataset created:")
     print(meta_dataset.head())
-
+    # Save the meta-dataset to a CSV file
+    meta_dataset.to_csv("meta_dataset_multiclass.csv", index=False)
     print(
         "\nStep 5: Train meta-models to predict Accuracy and F1-Scores from meta-features."
     )

@@ -206,6 +206,7 @@ with mlflow.start_run(run_name=f"META_RUN_{randomnumber}"):
 
     print("Meta-dataset created:")
     print(meta_dataset.head())
+    meta_dataset.to_csv("meta_dataset_regression.csv", index=False)
 
     print(
         "\nStep 5: Train meta-models to predict Mean Squared Error, Mean Absolute Error, and R2 Score from meta-features."
