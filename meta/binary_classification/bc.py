@@ -356,11 +356,13 @@ for metric in ["accuracy", "f1_score", "auc_roc"]:
             df_subset["model_name"],
             df_subset[f"actual_{metric}"],
             label=f"{dataset_name} - Actual",
+            marker="o",
         )
         plt.plot(
             df_subset["model_name"],
             df_subset[f"predicted_{metric}"],
             "--",
+            marker="x",
             label=f"{dataset_name} - Predicted",
         )
 

@@ -6,7 +6,11 @@ import mlflow
 import mlflow.sklearn
 import numpy as np
 import pandas as pd
-from sklearn.datasets import fetch_california_housing, load_diabetes
+from sklearn.datasets import (
+    fetch_california_housing,
+    fetch_openml,
+    load_diabetes,
+)
 from sklearn.decomposition import PCA
 from sklearn.ensemble import GradientBoostingRegressor, RandomForestRegressor
 from sklearn.feature_selection import mutual_info_regression
@@ -47,22 +51,32 @@ y_california = pd.Series(california.target)
 datasets.append(("California Housing", X_california, y_california))
 print("California Housing dataset loaded successfully.")
 
-# 3. Boston Housing dataset (if available)
-try:
-    from sklearn.datasets import load_boston
 
-    print("Loading Boston Housing dataset...")
-    boston = load_boston()
-    X_boston = pd.DataFrame(boston.data, columns=boston.feature_names)
-    y_boston = pd.Series(boston.target)
-    datasets.append(("Boston Housing", X_boston, y_boston))
-    print("Boston Housing dataset loaded successfully.")
-except ImportError:
-    print(
-        "Boston Housing dataset is not available in your scikit-learn version."
-    )
-except:
-    print("An error occurred while loading the Boston Housing dataset.")
+# 4. Concrete Compressive Strength dataset
+print("Loading Concrete Compressive Strength dataset...")
+concrete = fetch_openml(name="Concrete_Compressive_Strength", as_frame=True)
+X_concrete = concrete.data
+y_concrete = concrete.target
+datasets.append(("Concrete Compressive Strength", X_concrete, y_concrete))
+print("Concrete Compressive Strength dataset loaded successfully.")
+
+# 5. Energy Efficiency dataset
+print("Loading Energy Efficiency dataset...")
+energy = fetch_openml(name="Energy_efficiency", as_frame=True)
+X_energy = energy.data
+y_energy = energy.target
+datasets.append(("Energy Efficiency", X_energy, y_energy))
+print("Energy Efficiency dataset loaded successfully.")
+
+
+# 7. Auto MPG dataset
+print("Loading Auto MPG dataset...")
+auto_mpg = fetch_openml(name="autoMpg", as_frame=True)
+X_auto_mpg = auto_mpg.data.select_dtypes(include=[np.number]).dropna(axis=1)
+y_auto_mpg = auto_mpg.target
+datasets.append(("Auto MPG", X_auto_mpg, y_auto_mpg))
+print("Auto MPG dataset loaded successfully.")
+
 
 print("\nStep 2: Define diverse regression models to be used.")
 models = {
@@ -331,49 +345,56 @@ with mlflow.start_run(run_name=f"META_RUN_{randomnumber}"):
     mlflow.log_artifact(output_file_path)
     print(f"Predictions CSV saved and logged to MLflow as an artifact.")
 
-    # Plot and log comparisons between predicted and actual metrics
+    # Plot and log comparisons between predicted and actual metrics for each dataset
     for metric in ["mean_squared_error", "mean_absolute_error", "r2_score"]:
-        plt.figure(
-            figsize=(12, 8)
-        )  # Adjusting the figure size with more margin
         for dataset_name in predictions_df["dataset_name"].unique():
+            plt.figure(figsize=(12, 8))  # Adjusting the figure size
+
+            # Filter the DataFrame for the current dataset
             df_subset = predictions_df[
                 predictions_df["dataset_name"] == dataset_name
             ]
+
+            # Increase the line width and marker size for better visibility
             plt.plot(
                 df_subset["model_name"],
                 df_subset[f"actual_{metric}"],
                 label=f"{dataset_name} - Actual",
+                linestyle="-",  # Solid line for actual
+                marker="o",  # Circle marker for actual
+                linewidth=2,  # Thicker line
+                markersize=8,  # Larger marker
             )
             plt.plot(
                 df_subset["model_name"],
                 df_subset[f"predicted_{metric}"],
-                "--",
                 label=f"{dataset_name} - Predicted",
+                linestyle="--",  # Dashed line for predicted
+                marker="x",  # Cross marker for predicted
+                linewidth=2,  # Thicker line
+                markersize=8,  # Larger marker
             )
 
-        plt.title(
-            f"Predicted vs Actual {metric.replace('_', ' ').capitalize()}"
-        )
-        plt.xlabel("Model")
-        plt.ylabel(metric.replace("_", " ").capitalize())
-        plt.xticks(rotation=45)
+            plt.title(
+                f"Predicted vs Actual {metric.replace('_', ' ').capitalize()} for {dataset_name}"
+            )
+            plt.xlabel("Model")
+            plt.ylabel(metric.replace("_", " ").capitalize())
+            plt.xticks(rotation=45)
 
-        # Adjust the legend to be in the upper right corner
-        plt.legend(loc="upper right")
+            # Adjust the legend to be in the upper right corner
+            plt.legend(loc="upper right")
 
-        # Add margin to the plot
-        plt.subplots_adjust(left=0.1, right=0.9, top=0.9, bottom=0.2)
-        plt.grid(True)
-        plt.tight_layout()
+            plt.grid(True)
+            plt.tight_layout()
 
-        # Save the plot
-        plot_filename = f"{metric}_comparison_plot.png"
-        plt.savefig(plot_filename)
+            # Save the plot for each dataset and metric
+            plot_filename = f"{dataset_name}_{metric}_comparison_plot.png"
+            plt.savefig(plot_filename)
 
-        # Log the plot as an artifact
-        mlflow.log_artifact(plot_filename)
+            # Log the plot as an artifact
+            mlflow.log_artifact(plot_filename)
 
-        print(
-            f"{metric.replace('_', ' ').capitalize()} comparison plot saved and logged to MLflow as an artifact."
-        )
+            print(
+                f"{metric.replace('_', ' ').capitalize()} comparison plot for {dataset_name} saved and logged to MLflow as an artifact."
+            )

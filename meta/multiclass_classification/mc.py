@@ -346,11 +346,13 @@ with mlflow.start_run(run_name=f"META_RUN_{randomnumber}"):
                 df_subset["model_name"],
                 df_subset[f"actual_{metric}"],
                 label=f"{dataset_name} - Actual",
+                marker="o",
             )
             plt.plot(
                 df_subset["model_name"],
                 df_subset[f"predicted_{metric}"],
                 "--",
+                marker="x",
                 label=f"{dataset_name} - Predicted",
             )
 
