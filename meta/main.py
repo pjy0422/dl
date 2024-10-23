@@ -6,7 +6,7 @@ import mlflow
 import mlflow.sklearn
 import numpy as np
 import pandas as pd
-from sklearn.datasets import load_breast_cancer, make_classification
+from sklearn.datasets import load_breast_cancer
 from sklearn.decomposition import PCA
 from sklearn.ensemble import GradientBoostingRegressor, RandomForestClassifier
 from sklearn.feature_selection import mutual_info_classif
@@ -14,8 +14,12 @@ from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score, f1_score, roc_auc_score
 from sklearn.model_selection import train_test_split
+from sklearn.naive_bayes import GaussianNB
+from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.svm import SVC
 from sklearn.tree import DecisionTreeClassifier
+from xgboost import XGBClassifier
 
 warnings.filterwarnings("ignore")
 
@@ -66,24 +70,24 @@ except FileNotFoundError:
     )
 
 # 4. Synthetic datasets with varying parameters
-print("Generating synthetic datasets...")
-for i in range(2):
-    X_syn, y_syn = make_classification(
-        n_samples=500 + i * 250,
-        n_features=15 + i * 5,
-        n_informative=2 + i,
-        n_redundant=2,
-        n_classes=2,
-        weights=[0.7, 0.3],
-        flip_y=0.01,
-        random_state=42 + i,
-    )
-    datasets.append(
-        (f"Synthetic Dataset {i+1}", pd.DataFrame(X_syn), pd.Series(y_syn))
-    )
-    print(f"Synthetic Dataset {i+1} generated.")
+# print("Generating synthetic datasets...")
+# for i in range(2):
+#     X_syn, y_syn = make_classification(
+#         n_samples=500 + i * 250,
+#         n_features=15 + i * 5,
+#         n_informative=2 + i,
+#         n_redundant=2,
+#         n_classes=2,
+#         weights=[0.7, 0.3],
+#         flip_y=0.01,
+#         random_state=42 + i,
+#     )
+#     datasets.append(
+#         (f"Synthetic Dataset {i+1}", pd.DataFrame(X_syn), pd.Series(y_syn))
+#     )
+#     print(f"Synthetic Dataset {i+1} generated.")
 
-print("\nStep 2: Define classification models to be used.")
+print("\nStep 2: Define diverse classification models to be used.")
 models = {
     "Logistic Regression": LogisticRegression(
         max_iter=200, solver="lbfgs", n_jobs=-1
@@ -92,6 +96,12 @@ models = {
         n_estimators=50, random_state=42, n_jobs=-1
     ),
     "Decision Tree": DecisionTreeClassifier(random_state=42),
+    "SVM": SVC(probability=True, random_state=42),
+    "K-Nearest Neighbors": KNeighborsClassifier(n_neighbors=5, n_jobs=-1),
+    "Naive Bayes": GaussianNB(),
+    "XGBoost": XGBClassifier(
+        use_label_encoder=False, eval_metric="logloss", random_state=42
+    ),
 }
 
 print(
@@ -336,38 +346,44 @@ with mlflow.start_run(run_name=f"META_RUN_{randomnumber}"):
     print(f"Predictions CSV saved and logged to MLflow as an artifact.")
 
     # Plot and log comparisons between predicted and actual metrics
-    for metric in ["accuracy", "f1_score", "auc_roc"]:
-        plt.figure(figsize=(10, 6))
-        for dataset_name in predictions_df["dataset_name"].unique():
-            df_subset = predictions_df[
-                predictions_df["dataset_name"] == dataset_name
-            ]
-            plt.plot(
-                df_subset["model_name"],
-                df_subset[f"actual_{metric}"],
-                label=f"{dataset_name} - Actual",
-            )
-            plt.plot(
-                df_subset["model_name"],
-                df_subset[f"predicted_{metric}"],
-                "--",
-                label=f"{dataset_name} - Predicted",
-            )
-
-        plt.title(f"Predicted vs Actual {metric.capitalize()}")
-        plt.xlabel("Model")
-        plt.ylabel(metric.capitalize())
-        plt.xticks(rotation=45)
-        plt.legend()
-        plt.tight_layout()
-
-        # Save the plot
-        plot_filename = f"{metric}_comparison_plot.png"
-        plt.savefig(plot_filename)
-
-        # Log the plot as an artifact
-        mlflow.log_artifact(plot_filename)
-
-        print(
-            f"{metric.capitalize()} comparison plot saved and logged to MLflow as an artifact."
+for metric in ["accuracy", "f1_score", "auc_roc"]:
+    plt.figure(figsize=(12, 8))  # Adjusting the figure size with more margin
+    for dataset_name in predictions_df["dataset_name"].unique():
+        df_subset = predictions_df[
+            predictions_df["dataset_name"] == dataset_name
+        ]
+        plt.plot(
+            df_subset["model_name"],
+            df_subset[f"actual_{metric}"],
+            label=f"{dataset_name} - Actual",
         )
+        plt.plot(
+            df_subset["model_name"],
+            df_subset[f"predicted_{metric}"],
+            "--",
+            label=f"{dataset_name} - Predicted",
+        )
+
+    plt.title(f"Predicted vs Actual {metric.capitalize()}")
+    plt.xlabel("Model")
+    plt.ylabel(metric.capitalize())
+    plt.xticks(rotation=45)
+
+    # Adjust the legend to be in the upper right corner
+    plt.legend(loc="upper right")
+
+    # Add margin to the plot
+    plt.subplots_adjust(left=0.1, right=0.9, top=0.9, bottom=0.2)
+    plt.grid(True)
+    plt.tight_layout()
+
+    # Save the plot
+    plot_filename = f"{metric}_comparison_plot.png"
+    plt.savefig(plot_filename)
+
+    # Log the plot as an artifact
+    mlflow.log_artifact(plot_filename)
+
+    print(
+        f"{metric.capitalize()} comparison plot saved and logged to MLflow as an artifact."
+    )
