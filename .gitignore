@@ -10,3 +10,4 @@ vae/__pycache__/*
 vae/mlruns/*
 meta/binary_classification/mlartifacts/*
 meta/binary_classification/mlruns/*
+meta/binary_classification/creditcard.csv
