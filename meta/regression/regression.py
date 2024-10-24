@@ -97,10 +97,86 @@ print(
     "\nStep 3: Preprocess, extract meta-features, and record performance for each dataset and model."
 )
 
+
+def extract_meta_features(X_train, y_train):
+    meta_features = {}
+    meta_features["n_samples"] = X_train.shape[0]
+    meta_features["n_features"] = X_train.shape[1]
+    meta_features["feature_mean"] = np.mean(X_train)
+    meta_features["feature_std"] = np.std(X_train)
+    meta_features["coeff_variation"] = (
+        np.std(X_train) / np.mean(X_train) if np.mean(X_train) != 0 else 0
+    )
+
+    # Add target variable statistics
+    meta_features["target_mean"] = np.mean(y_train)
+    meta_features["target_std"] = np.std(y_train)
+    meta_features["target_skewness"] = pd.Series(y_train).skew()
+    meta_features["target_kurtosis"] = pd.Series(y_train).kurt()
+
+    # Number of outliers in target variable
+    q1 = np.percentile(y_train, 25)
+    q3 = np.percentile(y_train, 75)
+    iqr = q3 - q1
+    lower_bound = q1 - 1.5 * iqr
+    upper_bound = q3 + 1.5 * iqr
+    outliers = y_train[(y_train < lower_bound) | (y_train > upper_bound)]
+    meta_features["n_target_outliers"] = len(outliers)
+
+    # Compute skewness and kurtosis
+    skewness = skew(X_train, axis=0)
+    kurtosis_values = kurtosis(X_train, axis=0)
+    meta_features["avg_skewness"] = np.mean(skewness)
+    meta_features["avg_kurtosis"] = np.mean(kurtosis_values)
+
+    # Compute mean absolute correlation between features
+    corr_matrix = np.corrcoef(X_train, rowvar=False)
+    # Exclude self-correlation by masking the diagonal
+    mask = np.ones(corr_matrix.shape, dtype=bool)
+    np.fill_diagonal(mask, 0)
+    abs_corr = np.abs(corr_matrix[mask])
+    meta_features["mean_abs_correlation"] = np.mean(abs_corr)
+
+    # Number of features with zero variance
+    zero_variance_features = np.sum(np.var(X_train, axis=0) == 0)
+    meta_features["n_zero_variance_features"] = zero_variance_features
+
+    # Mean and median feature variances
+    variances = np.var(X_train, axis=0)
+    meta_features["mean_variance"] = np.mean(variances)
+    meta_features["median_variance"] = np.median(variances)
+
+    # Mean feature entropy
+    feature_entropies = [
+        entropy(np.histogram(X_train[:, i], bins=10)[0] + 1e-10)
+        for i in range(X_train.shape[1])
+    ]
+    meta_features["mean_feature_entropy"] = np.mean(feature_entropies)
+
+    n_components = min(5, X_train.shape[1])
+    pca = PCA(n_components=n_components)
+    pca.fit(X_train)
+    meta_features["pca_explained_variance"] = np.sum(
+        pca.explained_variance_ratio_
+    )
+
+    # Compute average correlation between features and target
+    corr_matrix_full = np.corrcoef(np.c_[X_train, y_train].T)
+    corr = corr_matrix_full[-1, :-1]
+    meta_features["avg_feature_target_correlation"] = np.mean(np.abs(corr))
+
+    mi = mutual_info_regression(X_train, y_train, random_state=42)
+    meta_features["avg_mutual_info"] = np.mean(mi)
+    return meta_features
+
+
 meta_features_list = []
 performance_list = []
 
 dataset_counter = 1
+
+# Data split ratios
+split_ratios = {"train": 0.6, "val": 0.2, "test": 0.2}
 
 # Start a single MLflow run for the entire experiment
 randomnumber = np.random.randint(0, 1000)
@@ -120,83 +196,20 @@ with mlflow.start_run(run_name=f"META_RUN_{randomnumber}"):
 
         # Split data into train, validation, and test sets
         X_temp, X_test, y_temp, y_test = train_test_split(
-            X_scaled, y, test_size=0.2, random_state=42
+            X_scaled, y, test_size=split_ratios["test"], random_state=42
         )
         X_train, X_val, y_train, y_val = train_test_split(
-            X_temp, y_temp, test_size=0.25 / 0.9, random_state=42
+            X_temp,
+            y_temp,
+            test_size=split_ratios["val"]
+            / (split_ratios["train"] + split_ratios["val"]),
+            random_state=42,
         )
         # Now, X_train: 60%, X_val: 20%, X_test: 20%
 
         # Extract meta-features
-        meta_features = {}
+        meta_features = extract_meta_features(X_train, y_train)
         meta_features["dataset_name"] = dataset_name
-        meta_features["n_samples"] = X_train.shape[0]
-        meta_features["n_features"] = X_train.shape[1]
-        meta_features["feature_mean"] = np.mean(X_train)
-        meta_features["feature_std"] = np.std(X_train)
-        meta_features["coeff_variation"] = (
-            np.std(X_train) / np.mean(X_train) if np.mean(X_train) != 0 else 0
-        )
-
-        # Add target variable statistics
-        meta_features["target_mean"] = np.mean(y_train)
-        meta_features["target_std"] = np.std(y_train)
-        meta_features["target_skewness"] = pd.Series(y_train).skew()
-        meta_features["target_kurtosis"] = pd.Series(y_train).kurt()
-
-        # Number of outliers in target variable
-        q1 = np.percentile(y_train, 25)
-        q3 = np.percentile(y_train, 75)
-        iqr = q3 - q1
-        lower_bound = q1 - 1.5 * iqr
-        upper_bound = q3 + 1.5 * iqr
-        outliers = y_train[(y_train < lower_bound) | (y_train > upper_bound)]
-        meta_features["n_target_outliers"] = len(outliers)
-
-        # Compute skewness and kurtosis
-        skewness = skew(X_train, axis=0)
-        kurtosis_values = kurtosis(X_train, axis=0)
-        meta_features["avg_skewness"] = np.mean(skewness)
-        meta_features["avg_kurtosis"] = np.mean(kurtosis_values)
-
-        # Compute mean absolute correlation between features
-        corr_matrix = np.corrcoef(X_train, rowvar=False)
-        # Exclude self-correlation by masking the diagonal
-        mask = np.ones(corr_matrix.shape, dtype=bool)
-        np.fill_diagonal(mask, 0)
-        abs_corr = np.abs(corr_matrix[mask])
-        meta_features["mean_abs_correlation"] = np.mean(abs_corr)
-
-        # Number of features with zero variance
-        zero_variance_features = np.sum(np.var(X_train, axis=0) == 0)
-        meta_features["n_zero_variance_features"] = zero_variance_features
-
-        # Mean and median feature variances
-        variances = np.var(X_train, axis=0)
-        meta_features["mean_variance"] = np.mean(variances)
-        meta_features["median_variance"] = np.median(variances)
-
-        # Mean feature entropy
-        feature_entropies = [
-            entropy(np.histogram(X_train[:, i], bins=10)[0] + 1e-10)
-            for i in range(X_train.shape[1])
-        ]
-        meta_features["mean_feature_entropy"] = np.mean(feature_entropies)
-
-        n_components = min(5, X_train.shape[1])
-        pca = PCA(n_components=n_components)
-        pca.fit(X_train)
-        meta_features["pca_explained_variance"] = np.sum(
-            pca.explained_variance_ratio_
-        )
-
-        # Compute average correlation between features and target
-        corr_matrix_full = np.corrcoef(np.c_[X_train, y_train].T)
-        corr = corr_matrix_full[-1, :-1]
-        meta_features["avg_feature_target_correlation"] = np.mean(np.abs(corr))
-
-        mi = mutual_info_regression(X_train, y_train, random_state=42)
-        meta_features["avg_mutual_info"] = np.mean(mi)
 
         for model_name, model in models.items():
             print(f"  Training {model_name}...")
@@ -210,52 +223,52 @@ with mlflow.start_run(run_name=f"META_RUN_{randomnumber}"):
             )
 
             model.fit(X_train, y_train)
-            # Evaluate on validation set
-            y_pred_val = model.predict(X_val)
 
-            mse_val = mean_squared_error(y_val, y_pred_val)
-            rmse_val = np.sqrt(mse_val)
-            mae_val = mean_absolute_error(y_val, y_pred_val)
-            r2_val = r2_score(y_val, y_pred_val)
+            for split_name, X_split, y_split in [
+                ("val", X_val, y_val),
+                ("test", X_test, y_test),
+            ]:
+                # Evaluate on split set
+                y_pred = model.predict(X_split)
 
-            # Evaluate on test set
-            y_pred_test = model.predict(X_test)
-            mse_test = mean_squared_error(y_test, y_pred_test)
-            rmse_test = np.sqrt(mse_test)
-            mae_test = mean_absolute_error(y_test, y_pred_test)
-            r2_test = r2_score(y_test, y_pred_test)
+                mse = mean_squared_error(y_split, y_pred)
+                rmse = np.sqrt(mse)
+                mae = mean_absolute_error(y_split, y_pred)
+                r2 = r2_score(y_split, y_pred)
 
-            performance_list.append(
-                {
-                    "dataset_name": dataset_name,
-                    "model_name": model_name,
-                    "mae_val": mae_val,
-                    "mse_val": mse_val,
-                    "rmse_val": rmse_val,
-                    "r2_val": r2_val,
-                    "mae_test": mae_test,
-                    "mse_test": mse_test,
-                    "rmse_test": rmse_test,
-                    "r2_test": r2_test,
-                }
-            )
+                performance_list.append(
+                    {
+                        "dataset_name": dataset_name,
+                        "model_name": model_name,
+                        f"mae_{split_name}": mae,
+                        f"mse_{split_name}": mse,
+                        f"rmse_{split_name}": rmse,
+                        f"r2_{split_name}": r2,
+                    }
+                )
+
+                print(f"    - {split_name.capitalize()} MAE: {mae:.4f}")
+                print(f"    - {split_name.capitalize()} MSE: {mse:.4f}")
+                print(f"    - {split_name.capitalize()} RMSE: {rmse:.4f}")
+                print(f"    - {split_name.capitalize()} R2 Score: {r2:.4f}")
+
+                # Log metrics
+                mlflow.log_metric(
+                    f"{dataset_name}_{model_name}_mae_{split_name}", mae
+                )
+                mlflow.log_metric(
+                    f"{dataset_name}_{model_name}_mse_{split_name}", mse
+                )
+                mlflow.log_metric(
+                    f"{dataset_name}_{model_name}_rmse_{split_name}", rmse
+                )
+                mlflow.log_metric(
+                    f"{dataset_name}_{model_name}_r2_{split_name}", r2
+                )
 
             meta_features_entry = meta_features.copy()
             meta_features_entry["model_name"] = model_name
             meta_features_list.append(meta_features_entry)
-
-            print(f"    - Validation MAE: {mae_val:.4f}")
-            print(f"    - Validation MSE: {mse_val:.4f}")
-            print(f"    - Validation RMSE: {rmse_val:.4f}")
-            print(f"    - Validation R2 Score: {r2_val:.4f}")
-
-            # Log metrics
-            mlflow.log_metric(f"{dataset_name}_{model_name}_mae_val", mae_val)
-            mlflow.log_metric(f"{dataset_name}_{model_name}_mse_val", mse_val)
-            mlflow.log_metric(
-                f"{dataset_name}_{model_name}_rmse_val", rmse_val
-            )
-            mlflow.log_metric(f"{dataset_name}_{model_name}_r2_val", r2_val)
 
             # Save model
             mlflow.sklearn.log_model(
@@ -263,8 +276,13 @@ with mlflow.start_run(run_name=f"META_RUN_{randomnumber}"):
             )
 
     print("\nStep 4: Create a meta-dataset for meta-learning.")
+    performance_df = (
+        pd.DataFrame(performance_list)
+        .groupby(["dataset_name", "model_name"])
+        .first()
+        .reset_index()
+    )
     meta_features_df = pd.DataFrame(meta_features_list)
-    performance_df = pd.DataFrame(performance_list)
     meta_dataset = pd.merge(
         meta_features_df, performance_df, on=["dataset_name", "model_name"]
     )
@@ -279,17 +297,11 @@ with mlflow.start_run(run_name=f"META_RUN_{randomnumber}"):
 
     # Prepare data for meta-models
     X_meta = meta_dataset.drop(
-        [
-            "dataset_name",
-            "model_name",
-            "mae_val",
-            "mse_val",
-            "rmse_val",
-            "r2_val",
-            "mae_test",
-            "mse_test",
-            "rmse_test",
-            "r2_test",
+        ["dataset_name", "model_name"]
+        + [
+            col
+            for col in meta_dataset.columns
+            if "mae_" in col or "mse_" in col or "rmse_" in col or "r2_" in col
         ],
         axis=1,
     )
@@ -308,342 +320,249 @@ with mlflow.start_run(run_name=f"META_RUN_{randomnumber}"):
     X_meta_scaled = scaler_meta.fit_transform(X_meta)
 
     # Targets
-    y_meta_mae = meta_dataset["mae_test"].values
-    y_meta_mse = meta_dataset["mse_test"].values
-    y_meta_rmse = meta_dataset["rmse_test"].values
-    y_meta_r2 = meta_dataset["r2_test"].values
+    y_meta = {}
+    for split in ["val", "test"]:
+        for metric in ["mae", "mse", "rmse", "r2"]:
+            key = f"{metric}_{split}"
+            y_meta[key] = meta_dataset[key].values
 
     groups = meta_dataset["dataset_name"].values
 
-    gkf = GroupKFold(n_splits=len(np.unique(groups)))
+    metric_names = list(y_meta.keys())
 
-    # Initialize lists to store results
-    mae_errors_nn = []
-    mse_errors_nn = []
-    rmse_errors_nn = []
-    r2_errors_nn = []
-
-    mae_errors_xgb = []
-    mse_errors_xgb = []
-    rmse_errors_xgb = []
-    r2_errors_xgb = []
-
-    # Define neural network architecture
-    class MetaModel(nn.Module):
-        def __init__(self, input_size):
-            super(MetaModel, self).__init__()
-            self.fc1 = nn.Linear(input_size, 64)
-            self.bn1 = nn.BatchNorm1d(64)
-            self.fc2 = nn.Linear(64, 32)
-            self.bn2 = nn.BatchNorm1d(32)
-            self.fc3 = nn.Linear(32, 1)
-            self.relu = nn.ReLU()
-            self.dropout = nn.Dropout(0.2)
-
-        def forward(self, x):
-            x = self.relu(self.bn1(self.fc1(x)))
-            x = self.dropout(x)
-            x = self.relu(self.bn2(self.fc2(x)))
-            x = self.dropout(x)
-            x = self.fc3(x)
-            return x
-
-    # Training function for neural network
-    def train_model(model, optimizer, X, y, num_epochs=500):
-        for epoch in range(num_epochs):
-            model.train()
-            optimizer.zero_grad()
-            outputs = model(X)
-            loss = torch.sqrt(nn.MSELoss()(outputs, y))
-            loss.backward()
-            optimizer.step()
-        return model
-
-    for train_idx, test_idx in gkf.split(
-        X_meta_scaled, y_meta_mae, groups=groups
+    def train_evaluate_meta_models(
+        X_meta_scaled, y_meta, groups, metric_names
     ):
-        X_train_meta, X_test_meta = (
-            X_meta_scaled[train_idx],
-            X_meta_scaled[test_idx],
-        )
-        y_train_mae, y_test_mae = y_meta_mae[train_idx], y_meta_mae[test_idx]
-        y_train_mse, y_test_mse = y_meta_mse[train_idx], y_meta_mse[test_idx]
-        y_train_rmse, y_test_rmse = (
-            y_meta_rmse[train_idx],
-            y_meta_rmse[test_idx],
-        )
-        y_train_r2, y_test_r2 = y_meta_r2[train_idx], y_meta_r2[test_idx]
+        # Initialize dictionaries to store errors
+        errors_nn = {metric: [] for metric in metric_names}
+        errors_xgb = {metric: [] for metric in metric_names}
 
-        # Convert to tensors
-        X_train_tensor = torch.tensor(X_train_meta, dtype=torch.float32)
-        y_train_mae_tensor = torch.tensor(
-            y_train_mae, dtype=torch.float32
-        ).unsqueeze(1)
-        y_train_mse_tensor = torch.tensor(
-            y_train_mse, dtype=torch.float32
-        ).unsqueeze(1)
-        y_train_rmse_tensor = torch.tensor(
-            y_train_rmse, dtype=torch.float32
-        ).unsqueeze(1)
-        y_train_r2_tensor = torch.tensor(
-            y_train_r2, dtype=torch.float32
-        ).unsqueeze(1)
+        gkf = GroupKFold(n_splits=len(np.unique(groups)))
 
-        X_test_tensor = torch.tensor(X_test_meta, dtype=torch.float32)
-        y_test_mae_tensor = torch.tensor(
-            y_test_mae, dtype=torch.float32
-        ).unsqueeze(1)
-        y_test_mse_tensor = torch.tensor(
-            y_test_mse, dtype=torch.float32
-        ).unsqueeze(1)
-        y_test_rmse_tensor = torch.tensor(
-            y_test_rmse, dtype=torch.float32
-        ).unsqueeze(1)
-        y_test_r2_tensor = torch.tensor(
-            y_test_r2, dtype=torch.float32
-        ).unsqueeze(1)
+        # Define neural network architecture
+        class MetaModel(nn.Module):
+            def __init__(self, input_size):
+                super(MetaModel, self).__init__()
+                self.fc1 = nn.Linear(input_size, 64)
+                self.bn1 = nn.BatchNorm1d(64)
+                self.fc2 = nn.Linear(64, 32)
+                self.bn2 = nn.BatchNorm1d(32)
+                self.fc3 = nn.Linear(32, 1)
+                self.relu = nn.ReLU()
+                self.dropout = nn.Dropout(0.2)
 
-        # Initialize models
-        input_size = X_train_meta.shape[1]
-        meta_model_mae = MetaModel(input_size)
-        meta_model_mse = MetaModel(input_size)
-        meta_model_rmse = MetaModel(input_size)
-        meta_model_r2 = MetaModel(input_size)
+            def forward(self, x):
+                x = self.relu(self.bn1(self.fc1(x)))
+                x = self.dropout(x)
+                x = self.relu(self.bn2(self.fc2(x)))
+                x = self.dropout(x)
+                x = self.fc3(x)
+                return x
 
-        # Loss function and optimizer
-        optimizer_mae = optim.Adam(meta_model_mae.parameters(), lr=0.001)
-        optimizer_mse = optim.Adam(meta_model_mse.parameters(), lr=0.001)
-        optimizer_rmse = optim.Adam(meta_model_rmse.parameters(), lr=0.001)
-        optimizer_r2 = optim.Adam(meta_model_r2.parameters(), lr=0.001)
+        # Training function for neural network
+        def train_model(model, optimizer, X, y, num_epochs=500):
+            for epoch in range(num_epochs):
+                model.train()
+                optimizer.zero_grad()
+                outputs = model(X)
+                loss = torch.sqrt(nn.MSELoss()(outputs, y))
+                loss.backward()
+                optimizer.step()
+            return model
 
-        # Train neural network models
-        meta_model_mae = train_model(
-            meta_model_mae, optimizer_mae, X_train_tensor, y_train_mae_tensor
-        )
-        meta_model_mse = train_model(
-            meta_model_mse, optimizer_mse, X_train_tensor, y_train_mse_tensor
-        )
-        meta_model_rmse = train_model(
-            meta_model_rmse,
-            optimizer_rmse,
-            X_train_tensor,
-            y_train_rmse_tensor,
-        )
-        meta_model_r2 = train_model(
-            meta_model_r2, optimizer_r2, X_train_tensor, y_train_r2_tensor
-        )
+        for train_idx, test_idx in gkf.split(
+            X_meta_scaled, y_meta[metric_names[0]], groups=groups
+        ):
+            X_train_meta, X_test_meta = (
+                X_meta_scaled[train_idx],
+                X_meta_scaled[test_idx],
+            )
+            X_train_tensor = torch.tensor(X_train_meta, dtype=torch.float32)
+            X_test_tensor = torch.tensor(X_test_meta, dtype=torch.float32)
 
-        # Evaluate neural network models on test set
-        meta_model_mae.eval()
-        meta_model_mse.eval()
-        meta_model_rmse.eval()
-        meta_model_r2.eval()
+            input_size = X_train_meta.shape[1]
 
-        with torch.no_grad():
-            pred_mae_nn = meta_model_mae(X_test_tensor).numpy().flatten()
-            pred_mse_nn = meta_model_mse(X_test_tensor).numpy().flatten()
-            pred_rmse_nn = meta_model_rmse(X_test_tensor).numpy().flatten()
-            pred_r2_nn = meta_model_r2(X_test_tensor).numpy().flatten()
+            # Initialize models for each metric
+            meta_models_nn = {}
+            meta_models_xgb = {}
+            optimizers = {}
+            y_train_tensors = {}
+            y_test_values = {}
 
-        mae_error_nn = mean_absolute_error(y_test_mae, pred_mae_nn)
-        mse_error_nn = mean_absolute_error(y_test_mse, pred_mse_nn)
-        rmse_error_nn = mean_absolute_error(y_test_rmse, pred_rmse_nn)
-        r2_error_nn = mean_absolute_error(y_test_r2, pred_r2_nn)
+            for metric in metric_names:
+                y_train, y_test = (
+                    y_meta[metric][train_idx],
+                    y_meta[metric][test_idx],
+                )
+                y_train_tensor = torch.tensor(
+                    y_train, dtype=torch.float32
+                ).unsqueeze(1)
+                y_test_values[metric] = y_test
+                y_train_tensors[metric] = y_train_tensor
 
-        mae_errors_nn.append(mae_error_nn)
-        mse_errors_nn.append(mse_error_nn)
-        rmse_errors_nn.append(rmse_error_nn)
-        r2_errors_nn.append(r2_error_nn)
+                # Neural Network model
+                model_nn = MetaModel(input_size)
+                optimizer = optim.Adam(model_nn.parameters(), lr=0.001)
+                meta_models_nn[metric] = model_nn
+                optimizers[metric] = optimizer
 
-        # Initialize XGBoost regressors
-        xgb_model_mae = XGBRegressor(random_state=42)
-        xgb_model_mse = XGBRegressor(random_state=42)
-        xgb_model_rmse = XGBRegressor(random_state=42)
-        xgb_model_r2 = XGBRegressor(random_state=42)
+                # XGBoost model
+                model_xgb = XGBRegressor(random_state=42)
+                meta_models_xgb[metric] = model_xgb
 
-        # Train XGBoost models
-        xgb_model_mae.fit(X_train_meta, y_train_mae)
-        xgb_model_mse.fit(X_train_meta, y_train_mse)
-        xgb_model_rmse.fit(X_train_meta, y_train_rmse)
-        xgb_model_r2.fit(X_train_meta, y_train_r2)
+            # Train neural network models
+            for metric in metric_names:
+                model_nn = meta_models_nn[metric]
+                optimizer = optimizers[metric]
+                y_train_tensor = y_train_tensors[metric]
+                model_nn = train_model(
+                    model_nn, optimizer, X_train_tensor, y_train_tensor
+                )
 
-        # Evaluate XGBoost models on test set
-        pred_mae_xgb = xgb_model_mae.predict(X_test_meta)
-        pred_mse_xgb = xgb_model_mse.predict(X_test_meta)
-        pred_rmse_xgb = xgb_model_rmse.predict(X_test_meta)
-        pred_r2_xgb = xgb_model_r2.predict(X_test_meta)
+            # Train XGBoost models
+            for metric in metric_names:
+                y_train = y_meta[metric][train_idx]
+                model_xgb = meta_models_xgb[metric]
+                model_xgb.fit(X_train_meta, y_train)
 
-        mae_error_xgb = mean_absolute_error(y_test_mae, pred_mae_xgb)
-        mse_error_xgb = mean_absolute_error(y_test_mse, pred_mse_xgb)
-        rmse_error_xgb = mean_absolute_error(y_test_rmse, pred_rmse_xgb)
-        r2_error_xgb = mean_absolute_error(y_test_r2, pred_r2_xgb)
+            # Evaluate models on test set
+            for metric in metric_names:
+                y_test = y_test_values[metric]
 
-        mae_errors_xgb.append(mae_error_xgb)
-        mse_errors_xgb.append(mse_error_xgb)
-        rmse_errors_xgb.append(rmse_error_xgb)
-        r2_errors_xgb.append(r2_error_xgb)
+                # Neural Network predictions
+                model_nn = meta_models_nn[metric]
+                model_nn.eval()
+                with torch.no_grad():
+                    pred_nn = model_nn(X_test_tensor).numpy().flatten()
+                error_nn = mean_absolute_error(y_test, pred_nn)
+                errors_nn[metric].append(error_nn)
 
-    mean_mae_abs_error_nn = np.mean(mae_errors_nn)
-    mean_mse_abs_error_nn = np.mean(mse_errors_nn)
-    mean_rmse_abs_error_nn = np.mean(rmse_errors_nn)
-    mean_r2_abs_error_nn = np.mean(r2_errors_nn)
+                # XGBoost predictions
+                model_xgb = meta_models_xgb[metric]
+                pred_xgb = model_xgb.predict(X_test_meta)
+                error_xgb = mean_absolute_error(y_test, pred_xgb)
+                errors_xgb[metric].append(error_xgb)
 
-    mean_mae_abs_error_xgb = np.mean(mae_errors_xgb)
-    mean_mse_abs_error_xgb = np.mean(mse_errors_xgb)
-    mean_rmse_abs_error_xgb = np.mean(rmse_errors_xgb)
-    mean_r2_abs_error_xgb = np.mean(r2_errors_xgb)
+        # Compute mean errors
+        mean_errors_nn = {
+            metric: np.mean(errors_nn[metric]) for metric in metric_names
+        }
+        mean_errors_xgb = {
+            metric: np.mean(errors_xgb[metric]) for metric in metric_names
+        }
+
+        return mean_errors_nn, mean_errors_xgb
+
+    mean_errors_nn, mean_errors_xgb = train_evaluate_meta_models(
+        X_meta_scaled, y_meta, groups, metric_names
+    )
 
     print("\nMeta-models training completed with cross-validation.")
 
     # Log evaluation metrics in MLflow
-    mlflow.log_metric("mean_mae_abs_error_nn", mean_mae_abs_error_nn)
-    mlflow.log_metric("mean_mse_abs_error_nn", mean_mse_abs_error_nn)
-    mlflow.log_metric("mean_rmse_abs_error_nn", mean_rmse_abs_error_nn)
-    mlflow.log_metric("mean_r2_abs_error_nn", mean_r2_abs_error_nn)
+    for metric in metric_names:
+        mlflow.log_metric(
+            f"mean_{metric}_abs_error_nn", mean_errors_nn[metric]
+        )
+        mlflow.log_metric(
+            f"mean_{metric}_abs_error_xgb", mean_errors_xgb[metric]
+        )
 
-    mlflow.log_metric("mean_mae_abs_error_xgb", mean_mae_abs_error_xgb)
-    mlflow.log_metric("mean_mse_abs_error_xgb", mean_mse_abs_error_xgb)
-    mlflow.log_metric("mean_rmse_abs_error_xgb", mean_rmse_abs_error_xgb)
-    mlflow.log_metric("mean_r2_abs_error_xgb", mean_r2_abs_error_xgb)
-
-    print(
-        f"\nMean Absolute Error of MAE Meta-Model (Neural Network): {mean_mae_abs_error_nn:.4f}"
-    )
-    print(
-        f"Mean Absolute Error of MSE Meta-Model (Neural Network): {mean_mse_abs_error_nn:.4f}"
-    )
-    print(
-        f"Mean Absolute Error of RMSE Meta-Model (Neural Network): {mean_rmse_abs_error_nn:.4f}"
-    )
-    print(
-        f"Mean Absolute Error of R2 Meta-Model (Neural Network): {mean_r2_abs_error_nn:.4f}"
-    )
-
-    print(
-        f"\nMean Absolute Error of MAE Meta-Model (XGBoost): {mean_mae_abs_error_xgb:.4f}"
-    )
-    print(
-        f"Mean Absolute Error of MSE Meta-Model (XGBoost): {mean_mse_abs_error_xgb:.4f}"
-    )
-    print(
-        f"Mean Absolute Error of RMSE Meta-Model (XGBoost): {mean_rmse_abs_error_xgb:.4f}"
-    )
-    print(
-        f"Mean Absolute Error of R2 Meta-Model (XGBoost): {mean_r2_abs_error_xgb:.4f}"
-    )
-
-    # Log meta-models in MLflow
-    mlflow.pytorch.log_model(meta_model_mae, "meta_model_mae_nn")
-    mlflow.pytorch.log_model(meta_model_mse, "meta_model_mse_nn")
-    mlflow.pytorch.log_model(meta_model_rmse, "meta_model_rmse_nn")
-    mlflow.pytorch.log_model(meta_model_r2, "meta_model_r2_nn")
-
-    # Log XGBoost models
-    mlflow.sklearn.log_model(xgb_model_mae, "meta_model_mae_xgb")
-    mlflow.sklearn.log_model(xgb_model_mse, "meta_model_mse_xgb")
-    mlflow.sklearn.log_model(xgb_model_rmse, "meta_model_rmse_xgb")
-    mlflow.sklearn.log_model(xgb_model_r2, "meta_model_r2_xgb")
-
-    print("Meta-models logged to MLflow.")
+    for metric in metric_names:
+        print(
+            f"\nMean Absolute Error of {metric.replace('_', ' ').upper()} Meta-Model (Neural Network): {mean_errors_nn[metric]:.4f}"
+        )
+        print(
+            f"Mean Absolute Error of {metric.replace('_', ' ').upper()} Meta-Model (XGBoost): {mean_errors_xgb[metric]:.4f}"
+        )
 
     print(
         "\nStep 6: Predict metrics for each dataset and model using the best meta-models."
     )
 
-    # For simplicity, let's assume XGBoost performed better and use it for predictions
     # Retrain XGBoost models on the entire meta-dataset
-    xgb_model_mae_final = XGBRegressor(random_state=42)
-    xgb_model_mse_final = XGBRegressor(random_state=42)
-    xgb_model_rmse_final = XGBRegressor(random_state=42)
-    xgb_model_r2_final = XGBRegressor(random_state=42)
-
-    xgb_model_mae_final.fit(X_meta_scaled, y_meta_mae)
-    xgb_model_mse_final.fit(X_meta_scaled, y_meta_mse)
-    xgb_model_rmse_final.fit(X_meta_scaled, y_meta_rmse)
-    xgb_model_r2_final.fit(X_meta_scaled, y_meta_r2)
-
-    # Save the final models
-    mlflow.sklearn.log_model(xgb_model_mae_final, "final_meta_model_mae_xgb")
-    mlflow.sklearn.log_model(xgb_model_mse_final, "final_meta_model_mse_xgb")
-    mlflow.sklearn.log_model(xgb_model_rmse_final, "final_meta_model_rmse_xgb")
-    mlflow.sklearn.log_model(xgb_model_r2_final, "final_meta_model_r2_xgb")
+    final_meta_models = {}
+    for metric in metric_names:
+        xgb_model_final = XGBRegressor(random_state=42)
+        xgb_model_final.fit(X_meta_scaled, y_meta[metric])
+        final_meta_models[metric] = xgb_model_final
+        # Save the final models
+        mlflow.sklearn.log_model(
+            xgb_model_final, f"final_meta_model_{metric}_xgb"
+        )
 
     # Predict on the meta-dataset
-    predicted_mae = xgb_model_mae_final.predict(X_meta_scaled)
-    predicted_mse = xgb_model_mse_final.predict(X_meta_scaled)
-    predicted_rmse = xgb_model_rmse_final.predict(X_meta_scaled)
-    predicted_r2 = xgb_model_r2_final.predict(X_meta_scaled)
-
     predictions_df = meta_dataset.copy()
-    predictions_df["predicted_mae"] = predicted_mae
-    predictions_df["predicted_mse"] = predicted_mse
-    predictions_df["predicted_rmse"] = predicted_rmse
-    predictions_df["predicted_r2"] = predicted_r2
+    for metric in metric_names:
+        predicted = final_meta_models[metric].predict(X_meta_scaled)
+        predictions_df[f"predicted_{metric}"] = predicted
 
     for idx, row in predictions_df.iterrows():
         print(f"{row['dataset_name']} - {row['model_name']}:")
-        print(f"  Predicted MAE: {row['predicted_mae']:.4f}")
-        print(f"  Actual MAE: {row['mae_test']:.4f}")
-        print(f"  Predicted MSE: {row['predicted_mse']:.4f}")
-        print(f"  Actual MSE: {row['mse_test']:.4f}")
-        print(f"  Predicted RMSE: {row['predicted_rmse']:.4f}")
-        print(f"  Actual RMSE: {row['rmse_test']:.4f}")
-        print(f"  Predicted R2 Score: {row['predicted_r2']:.4f}")
-        print(f"  Actual R2 Score: {row['r2_test']:.4f}")
+        for split in ["val", "test"]:
+            print(
+                f"  Predicted MAE ({split}): {row[f'predicted_mae_{split}']:.4f}"
+            )
+            print(f"  Actual MAE ({split}): {row[f'mae_{split}']:.4f}")
+            print(
+                f"  Predicted MSE ({split}): {row[f'predicted_mse_{split}']:.4f}"
+            )
+            print(f"  Actual MSE ({split}): {row[f'mse_{split}']:.4f}")
+            print(
+                f"  Predicted RMSE ({split}): {row[f'predicted_rmse_{split}']:.4f}"
+            )
+            print(f"  Actual RMSE ({split}): {row[f'rmse_{split}']:.4f}")
+            print(
+                f"  Predicted R2 Score ({split}): {row[f'predicted_r2_{split}']:.4f}"
+            )
+            print(f"  Actual R2 Score ({split}): {row[f'r2_{split}']:.4f}")
 
     print(
         "\nStep 7: Compile predictions and compare predicted metrics with actual metrics."
     )
 
-    print(
-        predictions_df[
-            [
-                "dataset_name",
-                "model_name",
-                "predicted_mae",
-                "mae_test",
-                "predicted_mse",
-                "mse_test",
-                "predicted_rmse",
-                "rmse_test",
-                "predicted_r2",
-                "r2_test",
-            ]
-        ]
-    )
+    print(predictions_df.head())
 
     print("\nStep 8: Evaluate the meta-models' performance.")
 
-    predictions_df["mae_abs_error"] = abs(
-        predictions_df["predicted_mae"] - predictions_df["mae_test"]
-    )
-    predictions_df["mse_abs_error"] = abs(
-        predictions_df["predicted_mse"] - predictions_df["mse_test"]
-    )
-    predictions_df["rmse_abs_error"] = abs(
-        predictions_df["predicted_rmse"] - predictions_df["rmse_test"]
-    )
-    predictions_df["r2_abs_error"] = abs(
-        predictions_df["predicted_r2"] - predictions_df["r2_test"]
-    )
+    for split in ["val", "test"]:
+        for metric in ["mae", "mse", "rmse", "r2"]:
+            predictions_df[f"{metric}_abs_error_{split}"] = abs(
+                predictions_df[f"predicted_{metric}_{split}"]
+                - predictions_df[f"{metric}_{split}"]
+            )
 
-    mean_mae_abs_error = predictions_df["mae_abs_error"].mean()
-    mean_mse_abs_error = predictions_df["mse_abs_error"].mean()
-    mean_rmse_abs_error = predictions_df["rmse_abs_error"].mean()
-    mean_r2_abs_error = predictions_df["r2_abs_error"].mean()
+        mean_mae_abs_error = predictions_df[f"mae_abs_error_{split}"].mean()
+        mean_mse_abs_error = predictions_df[f"mse_abs_error_{split}"].mean()
+        mean_rmse_abs_error = predictions_df[f"rmse_abs_error_{split}"].mean()
+        mean_r2_abs_error = predictions_df[f"r2_abs_error_{split}"].mean()
 
-    print(f"\nMean Absolute Error of MAE Meta-Model: {mean_mae_abs_error:.4f}")
-    print(f"Mean Absolute Error of MSE Meta-Model: {mean_mse_abs_error:.4f}")
-    print(f"Mean Absolute Error of RMSE Meta-Model: {mean_rmse_abs_error:.4f}")
-    print(
-        f"Mean Absolute Error of R2 Score Meta-Model: {mean_r2_abs_error:.4f}"
-    )
+        print(
+            f"\nMean Absolute Error of MAE Meta-Model ({split} set): {mean_mae_abs_error:.4f}"
+        )
+        print(
+            f"Mean Absolute Error of MSE Meta-Model ({split} set): {mean_mse_abs_error:.4f}"
+        )
+        print(
+            f"Mean Absolute Error of RMSE Meta-Model ({split} set): {mean_rmse_abs_error:.4f}"
+        )
+        print(
+            f"Mean Absolute Error of R2 Meta-Model ({split} set): {mean_r2_abs_error:.4f}"
+        )
 
-    # Log evaluation metrics in MLflow
-    mlflow.log_metric("mean_mae_abs_error_final", mean_mae_abs_error)
-    mlflow.log_metric("mean_mse_abs_error_final", mean_mse_abs_error)
-    mlflow.log_metric("mean_rmse_abs_error_final", mean_rmse_abs_error)
-    mlflow.log_metric("mean_r2_abs_error_final", mean_r2_abs_error)
+        # Log evaluation metrics in MLflow
+        mlflow.log_metric(
+            f"mean_mae_abs_error_{split}_final", mean_mae_abs_error
+        )
+        mlflow.log_metric(
+            f"mean_mse_abs_error_{split}_final", mean_mse_abs_error
+        )
+        mlflow.log_metric(
+            f"mean_rmse_abs_error_{split}_final", mean_rmse_abs_error
+        )
+        mlflow.log_metric(
+            f"mean_r2_abs_error_{split}_final", mean_r2_abs_error
+        )
 
     # Save the predictions DataFrame to a CSV file
     output_file_path = "meta_model_predictions_regression.csv"
@@ -655,41 +574,45 @@ with mlflow.start_run(run_name=f"META_RUN_{randomnumber}"):
     print(f"Predictions CSV saved and logged to MLflow as an artifact.")
 
     # Plot and log comparisons between predicted and actual metrics
-    for metric in ["mae", "mse", "rmse", "r2"]:
-        plt.figure(figsize=(12, 8))
-        for dataset_name in predictions_df["dataset_name"].unique():
-            df_subset = predictions_df[
-                predictions_df["dataset_name"] == dataset_name
-            ]
-            plt.plot(
-                df_subset["model_name"],
-                df_subset[f"{metric}_test"],
-                label=f"{dataset_name} - Actual",
-                marker="o",
+    for split in ["val", "test"]:
+        for metric in ["mae", "mse", "rmse", "r2"]:
+            plt.figure(figsize=(12, 8))
+            for dataset_name in predictions_df["dataset_name"].unique():
+                df_subset = predictions_df[
+                    predictions_df["dataset_name"] == dataset_name
+                ]
+                plt.plot(
+                    df_subset["model_name"],
+                    df_subset[f"{metric}_{split}"],
+                    label=f"{dataset_name} - Actual ({split})",
+                    marker="o",
+                )
+                plt.plot(
+                    df_subset["model_name"],
+                    df_subset[f"predicted_{metric}_{split}"],
+                    "--",
+                    marker="x",
+                    label=f"{dataset_name} - Predicted ({split})",
+                )
+
+            split_ratio = split_ratios.get(split, "Unknown")
+            plt.title(
+                f"Predicted vs Actual {metric.upper()} on {split.capitalize()} Set ({split_ratio*100:.0f}% of data)"
             )
-            plt.plot(
-                df_subset["model_name"],
-                df_subset[f"predicted_{metric}"],
-                "--",
-                marker="x",
-                label=f"{dataset_name} - Predicted",
+            plt.xlabel("Model")
+            plt.ylabel(metric.upper())
+            plt.xticks(rotation=45)
+            plt.legend(loc="upper right")
+            plt.grid(True)
+            plt.tight_layout()
+
+            # Save the plot
+            plot_filename = f"{metric}_{split}_comparison_plot.png"
+            plt.savefig(plot_filename)
+
+            # Log the plot as an artifact
+            mlflow.log_artifact(plot_filename)
+
+            print(
+                f"{metric.upper()} comparison plot for {split} set saved and logged to MLflow as an artifact."
             )
-
-        plt.title(f"Predicted vs Actual {metric.upper()} on Test Set")
-        plt.xlabel("Model")
-        plt.ylabel(metric.upper())
-        plt.xticks(rotation=45)
-        plt.legend(loc="upper right")
-        plt.grid(True)
-        plt.tight_layout()
-
-        # Save the plot
-        plot_filename = f"{metric}_comparison_plot.png"
-        plt.savefig(plot_filename)
-
-        # Log the plot as an artifact
-        mlflow.log_artifact(plot_filename)
-
-        print(
-            f"{metric.upper()} comparison plot saved and logged to MLflow as an artifact."
-        )

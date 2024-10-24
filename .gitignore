@@ -1,6 +1,4 @@
 gan/data/*
-*.png
-*.jpg
 gan/data/MNIST/raw/*
 /gan/__pycache__/*
 /gan/mlruns/*

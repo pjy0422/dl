@@ -25,7 +25,6 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 from sklearn.model_selection import GroupKFold, train_test_split
-from sklearn.multiclass import OneVsRestClassifier
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import LabelBinarizer, LabelEncoder, StandardScaler
 from sklearn.tree import DecisionTreeClassifier
@@ -91,10 +90,59 @@ print(
     "\nStep 3: Preprocess, extract meta-features, and record performance for each dataset and model."
 )
 
+
+def extract_meta_features(X_train, y_train):
+    meta_features = {}
+    meta_features["n_samples"] = X_train.shape[0]
+    meta_features["n_features"] = X_train.shape[1]
+    class_counts = np.bincount(y_train)
+    meta_features["n_classes"] = len(class_counts)
+    class_balance = class_counts / class_counts.sum()
+    meta_features["class_balance"] = class_balance.tolist()
+    meta_features["feature_mean"] = np.mean(X_train)
+    meta_features["feature_std"] = np.std(X_train)
+    meta_features["coeff_variation"] = (
+        np.std(X_train) / np.mean(X_train) if np.mean(X_train) != 0 else 0
+    )
+    n_components = min(5, X_train.shape[1])
+    pca = PCA(n_components=n_components)
+    pca.fit(X_train)
+    meta_features["pca_explained_variance"] = np.sum(
+        pca.explained_variance_ratio_
+    )
+    mi = mutual_info_classif(
+        X_train, y_train, discrete_features=False, random_state=42
+    )
+    meta_features["avg_mutual_info"] = np.mean(mi)
+    skewness = skew(X_train, axis=0)
+    kurtosis_values = kurtosis(X_train, axis=0)
+    meta_features["avg_skewness"] = np.mean(skewness)
+    meta_features["avg_kurtosis"] = np.mean(kurtosis_values)
+    corr_matrix = np.corrcoef(X_train, rowvar=False)
+    mask = np.ones(corr_matrix.shape, dtype=bool)
+    np.fill_diagonal(mask, 0)
+    abs_corr = np.abs(corr_matrix[mask])
+    meta_features["mean_abs_correlation"] = np.mean(abs_corr)
+    zero_variance_features = np.sum(np.var(X_train, axis=0) == 0)
+    meta_features["n_zero_variance_features"] = zero_variance_features
+    variances = np.var(X_train, axis=0)
+    meta_features["mean_variance"] = np.mean(variances)
+    meta_features["median_variance"] = np.median(variances)
+    feature_entropies = [
+        entropy(np.histogram(X_train[:, i], bins=10)[0] + 1e-10)
+        for i in range(X_train.shape[1])
+    ]
+    meta_features["mean_feature_entropy"] = np.mean(feature_entropies)
+    return meta_features
+
+
 meta_features_list = []
 performance_list = []
 
 dataset_counter = 1
+
+# Data split ratios
+split_ratios = {"train": 0.6, "val": 0.2, "test": 0.2}
 
 # Start a single MLflow run for the entire experiment
 randomnumber = np.random.randint(0, 1000)
@@ -123,68 +171,24 @@ with mlflow.start_run(run_name=f"META_RUN_{randomnumber}"):
 
         # Split data into train, validation, and test sets
         X_temp, X_test, y_temp, y_test = train_test_split(
-            X_scaled, y, test_size=0.2, stratify=y, random_state=42
+            X_scaled,
+            y,
+            test_size=split_ratios["test"],
+            stratify=y,
+            random_state=42,
         )
         X_train, X_val, y_train, y_val = train_test_split(
-            X_temp, y_temp, test_size=0.25, stratify=y_temp, random_state=42
+            X_temp,
+            y_temp,
+            test_size=split_ratios["val"]
+            / (split_ratios["train"] + split_ratios["val"]),
+            stratify=y_temp,
+            random_state=42,
         )
         # Now, X_train: 60%, X_val: 20%, X_test: 20%
 
-        meta_features = {}
+        meta_features = extract_meta_features(X_train, y_train)
         meta_features["dataset_name"] = dataset_name
-        meta_features["n_samples"] = X_train.shape[0]
-        meta_features["n_features"] = X_train.shape[1]
-        class_counts = np.bincount(y_train)
-        meta_features["n_classes"] = len(class_counts)
-        class_balance = class_counts / class_counts.sum()
-        meta_features["class_balance"] = class_balance.tolist()
-        meta_features["feature_mean"] = np.mean(X_train)
-        meta_features["feature_std"] = np.std(X_train)
-        meta_features["coeff_variation"] = (
-            np.std(X_train) / np.mean(X_train) if np.mean(X_train) != 0 else 0
-        )
-
-        n_components = min(5, X_train.shape[1])
-        pca = PCA(n_components=n_components)
-        pca.fit(X_train)
-        meta_features["pca_explained_variance"] = np.sum(
-            pca.explained_variance_ratio_
-        )
-
-        mi = mutual_info_classif(
-            X_train, y_train, discrete_features=False, random_state=42
-        )
-        meta_features["avg_mutual_info"] = np.mean(mi)
-
-        # Compute skewness and kurtosis
-        skewness = skew(X_train, axis=0)
-        kurtosis_values = kurtosis(X_train, axis=0)
-        meta_features["avg_skewness"] = np.mean(skewness)
-        meta_features["avg_kurtosis"] = np.mean(kurtosis_values)
-
-        # Compute mean absolute correlation between features
-        corr_matrix = np.corrcoef(X_train, rowvar=False)
-        # Exclude self-correlation by masking the diagonal
-        mask = np.ones(corr_matrix.shape, dtype=bool)
-        np.fill_diagonal(mask, 0)
-        abs_corr = np.abs(corr_matrix[mask])
-        meta_features["mean_abs_correlation"] = np.mean(abs_corr)
-
-        # Number of features with zero variance
-        zero_variance_features = np.sum(np.var(X_train, axis=0) == 0)
-        meta_features["n_zero_variance_features"] = zero_variance_features
-
-        # Mean and median feature variances
-        variances = np.var(X_train, axis=0)
-        meta_features["mean_variance"] = np.mean(variances)
-        meta_features["median_variance"] = np.median(variances)
-
-        # Mean feature entropy
-        feature_entropies = [
-            entropy(np.histogram(X_train[:, i], bins=10)[0] + 1e-10)
-            for i in range(X_train.shape[1])
-        ]
-        meta_features["mean_feature_entropy"] = np.mean(feature_entropies)
 
         for model_name, model in models.items():
             print(f"  Training {model_name}...")
@@ -198,116 +202,86 @@ with mlflow.start_run(run_name=f"META_RUN_{randomnumber}"):
             )
 
             model.fit(X_train, y_train)
-            y_pred_val = model.predict(X_val)
-            if hasattr(model, "predict_proba"):
-                y_proba_val = model.predict_proba(X_val)
-            else:
-                # For models without predict_proba, use decision_function and apply softmax
-                decision_vals = model.decision_function(X_val)
-                y_proba_val = np.exp(decision_vals) / np.sum(
-                    np.exp(decision_vals), axis=1, keepdims=True
+            for split_name, X_split, y_split in [
+                ("val", X_val, y_val),
+                ("test", X_test, y_test),
+            ]:
+                y_pred = model.predict(X_split)
+                if hasattr(model, "predict_proba"):
+                    y_proba = model.predict_proba(X_split)
+                else:
+                    # For models without predict_proba, use decision_function and apply softmax
+                    decision_vals = model.decision_function(X_split)
+                    y_proba = np.exp(decision_vals) / np.sum(
+                        np.exp(decision_vals), axis=1, keepdims=True
+                    )
+
+                # Binarize the labels for multiclass metrics
+                lb = LabelBinarizer()
+                lb.fit(y_train)
+                y_binarized = lb.transform(y_split)
+
+                acc = accuracy_score(y_split, y_pred)
+                precision = precision_score(
+                    y_split, y_pred, average="macro", zero_division=0
+                )
+                recall = recall_score(
+                    y_split, y_pred, average="macro", zero_division=0
+                )
+                f1 = f1_score(
+                    y_split, y_pred, average="macro", zero_division=0
+                )
+                try:
+                    auc = roc_auc_score(
+                        y_binarized,
+                        y_proba,
+                        average="macro",
+                        multi_class="ovr",
+                    )
+                except ValueError:
+                    auc = np.nan
+
+                performance_list.append(
+                    {
+                        "dataset_name": dataset_name,
+                        "model_name": model_name,
+                        f"accuracy_{split_name}": acc,
+                        f"precision_{split_name}": precision,
+                        f"recall_{split_name}": recall,
+                        f"f1_score_{split_name}": f1,
+                        f"auc_roc_{split_name}": auc,
+                    }
                 )
 
-            # Binarize the labels for multiclass metrics
-            lb = LabelBinarizer()
-            lb.fit(y_train)
-            y_val_binarized = lb.transform(y_val)
-
-            acc_val = accuracy_score(y_val, y_pred_val)
-            precision_val = precision_score(
-                y_val, y_pred_val, average="macro", zero_division=0
-            )
-            recall_val = recall_score(
-                y_val, y_pred_val, average="macro", zero_division=0
-            )
-            f1_val = f1_score(
-                y_val, y_pred_val, average="macro", zero_division=0
-            )
-            try:
-                auc_val = roc_auc_score(
-                    y_val_binarized,
-                    y_proba_val,
-                    average="macro",
-                    multi_class="ovr",
+                print(f"    - {split_name.capitalize()} Accuracy: {acc:.4f}")
+                print(
+                    f"    - {split_name.capitalize()} Precision: {precision:.4f}"
                 )
-            except ValueError:
-                auc_val = np.nan
+                print(f"    - {split_name.capitalize()} Recall: {recall:.4f}")
+                print(f"    - {split_name.capitalize()} F1-Score: {f1:.4f}")
+                print(f"    - {split_name.capitalize()} AUC-ROC: {auc:.4f}")
 
-            # Evaluate on test set
-            y_pred_test = model.predict(X_test)
-            if hasattr(model, "predict_proba"):
-                y_proba_test = model.predict_proba(X_test)
-            else:
-                decision_vals_test = model.decision_function(X_test)
-                y_proba_test = np.exp(decision_vals_test) / np.sum(
-                    np.exp(decision_vals_test), axis=1, keepdims=True
+                # Log metrics
+                mlflow.log_metric(
+                    f"{dataset_name}_{model_name}_accuracy_{split_name}", acc
                 )
-
-            y_test_binarized = lb.transform(y_test)
-
-            acc_test = accuracy_score(y_test, y_pred_test)
-            precision_test = precision_score(
-                y_test, y_pred_test, average="macro", zero_division=0
-            )
-            recall_test = recall_score(
-                y_test, y_pred_test, average="macro", zero_division=0
-            )
-            f1_test = f1_score(
-                y_test, y_pred_test, average="macro", zero_division=0
-            )
-            try:
-                auc_test = roc_auc_score(
-                    y_test_binarized,
-                    y_proba_test,
-                    average="macro",
-                    multi_class="ovr",
+                mlflow.log_metric(
+                    f"{dataset_name}_{model_name}_precision_{split_name}",
+                    precision,
                 )
-            except ValueError:
-                auc_test = np.nan
-
-            performance_list.append(
-                {
-                    "dataset_name": dataset_name,
-                    "model_name": model_name,
-                    "accuracy_val": acc_val,
-                    "precision_val": precision_val,
-                    "recall_val": recall_val,
-                    "f1_score_val": f1_val,
-                    "auc_roc_val": auc_val,
-                    "accuracy_test": acc_test,
-                    "precision_test": precision_test,
-                    "recall_test": recall_test,
-                    "f1_score_test": f1_test,
-                    "auc_roc_test": auc_test,
-                }
-            )
+                mlflow.log_metric(
+                    f"{dataset_name}_{model_name}_recall_{split_name}", recall
+                )
+                mlflow.log_metric(
+                    f"{dataset_name}_{model_name}_f1_score_{split_name}", f1
+                )
+                mlflow.log_metric(
+                    f"{dataset_name}_{model_name}_auc_roc_{split_name}", auc
+                )
 
             meta_features_entry = meta_features.copy()
             meta_features_entry["model_name"] = model_name
             meta_features_list.append(meta_features_entry)
-
-            print(f"    - Validation Accuracy: {acc_val:.4f}")
-            print(f"    - Validation Precision: {precision_val:.4f}")
-            print(f"    - Validation Recall: {recall_val:.4f}")
-            print(f"    - Validation F1-Score: {f1_val:.4f}")
-            print(f"    - Validation AUC-ROC: {auc_val:.4f}")
-
-            # Log metrics
-            mlflow.log_metric(
-                f"{dataset_name}_{model_name}_accuracy_val", acc_val
-            )
-            mlflow.log_metric(
-                f"{dataset_name}_{model_name}_precision_val", precision_val
-            )
-            mlflow.log_metric(
-                f"{dataset_name}_{model_name}_recall_val", recall_val
-            )
-            mlflow.log_metric(
-                f"{dataset_name}_{model_name}_f1_score_val", f1_val
-            )
-            mlflow.log_metric(
-                f"{dataset_name}_{model_name}_auc_roc_val", auc_val
-            )
 
             # Save model
             mlflow.sklearn.log_model(
@@ -315,11 +289,16 @@ with mlflow.start_run(run_name=f"META_RUN_{randomnumber}"):
             )
 
         print("\nStep 4: Create a meta-dataset for meta-learning.")
-        meta_features_df = pd.DataFrame(meta_features_list)
-        performance_df = pd.DataFrame(performance_list)
-        meta_dataset = pd.merge(
-            meta_features_df, performance_df, on=["dataset_name", "model_name"]
-        )
+    performance_df = (
+        pd.DataFrame(performance_list)
+        .groupby(["dataset_name", "model_name"])
+        .first()
+        .reset_index()
+    )
+    meta_features_df = pd.DataFrame(meta_features_list)
+    meta_dataset = pd.merge(
+        meta_features_df, performance_df, on=["dataset_name", "model_name"]
+    )
 
     print("Meta-dataset created:")
     print(meta_dataset.head())
@@ -340,20 +319,17 @@ with mlflow.start_run(run_name=f"META_RUN_{randomnumber}"):
         [meta_dataset.drop("class_balance", axis=1), class_balance_df], axis=1
     )
 
+    # Prepare the features
     X_meta = meta_dataset_expanded.drop(
-        [
-            "dataset_name",
-            "model_name",
-            "accuracy_val",
-            "precision_val",
-            "recall_val",
-            "f1_score_val",
-            "auc_roc_val",
-            "accuracy_test",
-            "precision_test",
-            "recall_test",
-            "f1_score_test",
-            "auc_roc_test",
+        ["dataset_name", "model_name"]
+        + [
+            col
+            for col in meta_dataset_expanded.columns
+            if "accuracy" in col
+            or "precision" in col
+            or "recall" in col
+            or "f1_score" in col
+            or "auc_roc" in col
         ],
         axis=1,
     )
@@ -372,436 +348,292 @@ with mlflow.start_run(run_name=f"META_RUN_{randomnumber}"):
     X_meta_scaled = scaler_meta.fit_transform(X_meta)
 
     # Targets
-    y_meta_acc = meta_dataset_expanded["accuracy_test"].values
-    y_meta_precision = meta_dataset_expanded["precision_test"].values
-    y_meta_recall = meta_dataset_expanded["recall_test"].values
-    y_meta_f1 = meta_dataset_expanded["f1_score_test"].values
-    y_meta_auc = (
-        meta_dataset_expanded["auc_roc_test"]
-        .fillna(meta_dataset_expanded["auc_roc_test"].mean())
-        .values
-    )
+    y_meta = {}
+    for split in ["val", "test"]:
+        for metric in [
+            "accuracy",
+            "precision",
+            "recall",
+            "f1_score",
+            "auc_roc",
+        ]:
+            key = f"{metric}_{split}"
+            y_meta[key] = (
+                meta_dataset_expanded[key]
+                .fillna(meta_dataset_expanded[key].mean())
+                .values
+            )
 
     groups = meta_dataset_expanded["dataset_name"].values
 
-    gkf = GroupKFold(n_splits=len(np.unique(groups)))
+    metric_names = list(y_meta.keys())
 
-    # Initialize lists to store results
-    acc_errors_nn = []
-    precision_errors_nn = []
-    recall_errors_nn = []
-    f1_errors_nn = []
-    auc_errors_nn = []
-
-    acc_errors_xgb = []
-    precision_errors_xgb = []
-    recall_errors_xgb = []
-    f1_errors_xgb = []
-    auc_errors_xgb = []
-
-    # Define neural network architecture
-    class MetaModel(nn.Module):
-        def __init__(self, input_size):
-            super(MetaModel, self).__init__()
-            self.fc1 = nn.Linear(input_size, 64)
-            self.bn1 = nn.BatchNorm1d(64)
-            self.fc2 = nn.Linear(64, 32)
-            self.bn2 = nn.BatchNorm1d(32)
-            self.fc3 = nn.Linear(32, 1)
-            self.relu = nn.ReLU()
-            self.dropout = nn.Dropout(0.2)
-
-        def forward(self, x):
-            x = self.relu(self.bn1(self.fc1(x)))
-            x = self.dropout(x)
-            x = self.relu(self.bn2(self.fc2(x)))
-            x = self.dropout(x)
-            x = self.fc3(x)
-            return x
-
-    # Training function for neural network
-    def train_model(model, optimizer, X, y, num_epochs=500):
-        for epoch in range(num_epochs):
-            model.train()
-            optimizer.zero_grad()
-            outputs = model(X)
-            loss = torch.sqrt(nn.MSELoss()(outputs, y))
-            loss.backward()
-            optimizer.step()
-        return model
-
-    for train_idx, test_idx in gkf.split(
-        X_meta_scaled, y_meta_acc, groups=groups
+    def train_evaluate_meta_models(
+        X_meta_scaled, y_meta, groups, metric_names
     ):
-        X_train_meta, X_test_meta = (
-            X_meta_scaled[train_idx],
-            X_meta_scaled[test_idx],
-        )
-        y_train_acc, y_test_acc = y_meta_acc[train_idx], y_meta_acc[test_idx]
-        y_train_precision, y_test_precision = (
-            y_meta_precision[train_idx],
-            y_meta_precision[test_idx],
-        )
-        y_train_recall, y_test_recall = (
-            y_meta_recall[train_idx],
-            y_meta_recall[test_idx],
-        )
-        y_train_f1, y_test_f1 = y_meta_f1[train_idx], y_meta_f1[test_idx]
-        y_train_auc, y_test_auc = y_meta_auc[train_idx], y_meta_auc[test_idx]
+        # Initialize dictionaries to store errors
+        errors_nn = {metric: [] for metric in metric_names}
+        errors_xgb = {metric: [] for metric in metric_names}
 
-        # Convert to tensors
-        X_train_tensor = torch.tensor(X_train_meta, dtype=torch.float32)
-        y_train_acc_tensor = torch.tensor(
-            y_train_acc, dtype=torch.float32
-        ).unsqueeze(1)
-        y_train_precision_tensor = torch.tensor(
-            y_train_precision, dtype=torch.float32
-        ).unsqueeze(1)
-        y_train_recall_tensor = torch.tensor(
-            y_train_recall, dtype=torch.float32
-        ).unsqueeze(1)
-        y_train_f1_tensor = torch.tensor(
-            y_train_f1, dtype=torch.float32
-        ).unsqueeze(1)
-        y_train_auc_tensor = torch.tensor(
-            y_train_auc, dtype=torch.float32
-        ).unsqueeze(1)
+        gkf = GroupKFold(n_splits=len(np.unique(groups)))
 
-        X_test_tensor = torch.tensor(X_test_meta, dtype=torch.float32)
-        y_test_acc_tensor = torch.tensor(
-            y_test_acc, dtype=torch.float32
-        ).unsqueeze(1)
-        y_test_precision_tensor = torch.tensor(
-            y_test_precision, dtype=torch.float32
-        ).unsqueeze(1)
-        y_test_recall_tensor = torch.tensor(
-            y_test_recall, dtype=torch.float32
-        ).unsqueeze(1)
-        y_test_f1_tensor = torch.tensor(
-            y_test_f1, dtype=torch.float32
-        ).unsqueeze(1)
-        y_test_auc_tensor = torch.tensor(
-            y_test_auc, dtype=torch.float32
-        ).unsqueeze(1)
+        # Define neural network architecture
+        class MetaModel(nn.Module):
+            def __init__(self, input_size):
+                super(MetaModel, self).__init__()
+                self.fc1 = nn.Linear(input_size, 64)
+                self.bn1 = nn.BatchNorm1d(64)
+                self.fc2 = nn.Linear(64, 32)
+                self.bn2 = nn.BatchNorm1d(32)
+                self.fc3 = nn.Linear(32, 1)
+                self.relu = nn.ReLU()
+                self.dropout = nn.Dropout(0.2)
 
-        # Initialize models
-        input_size = X_train_meta.shape[1]
-        meta_model_acc = MetaModel(input_size)
-        meta_model_precision = MetaModel(input_size)
-        meta_model_recall = MetaModel(input_size)
-        meta_model_f1 = MetaModel(input_size)
-        meta_model_auc = MetaModel(input_size)
+            def forward(self, x):
+                x = self.relu(self.bn1(self.fc1(x)))
+                x = self.dropout(x)
+                x = self.relu(self.bn2(self.fc2(x)))
+                x = self.dropout(x)
+                x = self.fc3(x)
+                return x
 
-        # Loss function and optimizer
-        optimizer_acc = optim.Adam(meta_model_acc.parameters(), lr=0.001)
-        optimizer_precision = optim.Adam(
-            meta_model_precision.parameters(), lr=0.001
-        )
-        optimizer_recall = optim.Adam(meta_model_recall.parameters(), lr=0.001)
-        optimizer_f1 = optim.Adam(meta_model_f1.parameters(), lr=0.001)
-        optimizer_auc = optim.Adam(meta_model_auc.parameters(), lr=0.001)
+        # Training function for neural network
+        def train_model(model, optimizer, X, y, num_epochs=500):
+            for epoch in range(num_epochs):
+                model.train()
+                optimizer.zero_grad()
+                outputs = model(X)
+                loss = torch.sqrt(nn.MSELoss()(outputs, y))
+                loss.backward()
+                optimizer.step()
+            return model
 
-        # Train neural network models
-        meta_model_acc = train_model(
-            meta_model_acc, optimizer_acc, X_train_tensor, y_train_acc_tensor
-        )
-        meta_model_precision = train_model(
-            meta_model_precision,
-            optimizer_precision,
-            X_train_tensor,
-            y_train_precision_tensor,
-        )
-        meta_model_recall = train_model(
-            meta_model_recall,
-            optimizer_recall,
-            X_train_tensor,
-            y_train_recall_tensor,
-        )
-        meta_model_f1 = train_model(
-            meta_model_f1, optimizer_f1, X_train_tensor, y_train_f1_tensor
-        )
-        meta_model_auc = train_model(
-            meta_model_auc, optimizer_auc, X_train_tensor, y_train_auc_tensor
-        )
-
-        # Evaluate neural network models on test set
-        meta_model_acc.eval()
-        meta_model_precision.eval()
-        meta_model_recall.eval()
-        meta_model_f1.eval()
-        meta_model_auc.eval()
-
-        with torch.no_grad():
-            pred_acc_nn = meta_model_acc(X_test_tensor).numpy().flatten()
-            pred_precision_nn = (
-                meta_model_precision(X_test_tensor).numpy().flatten()
+        for train_idx, test_idx in gkf.split(
+            X_meta_scaled, y_meta[metric_names[0]], groups=groups
+        ):
+            X_train_meta, X_test_meta = (
+                X_meta_scaled[train_idx],
+                X_meta_scaled[test_idx],
             )
-            pred_recall_nn = meta_model_recall(X_test_tensor).numpy().flatten()
-            pred_f1_nn = meta_model_f1(X_test_tensor).numpy().flatten()
-            pred_auc_nn = meta_model_auc(X_test_tensor).numpy().flatten()
+            X_train_tensor = torch.tensor(X_train_meta, dtype=torch.float32)
+            X_test_tensor = torch.tensor(X_test_meta, dtype=torch.float32)
 
-        acc_error_nn = mean_absolute_error(y_test_acc, pred_acc_nn)
-        precision_error_nn = mean_absolute_error(
-            y_test_precision, pred_precision_nn
-        )
-        recall_error_nn = mean_absolute_error(y_test_recall, pred_recall_nn)
-        f1_error_nn = mean_absolute_error(y_test_f1, pred_f1_nn)
-        auc_error_nn = mean_absolute_error(y_test_auc, pred_auc_nn)
+            input_size = X_train_meta.shape[1]
 
-        acc_errors_nn.append(acc_error_nn)
-        precision_errors_nn.append(precision_error_nn)
-        recall_errors_nn.append(recall_error_nn)
-        f1_errors_nn.append(f1_error_nn)
-        auc_errors_nn.append(auc_error_nn)
+            # Initialize models for each metric
+            meta_models_nn = {}
+            meta_models_xgb = {}
+            optimizers = {}
+            y_train_tensors = {}
+            y_test_values = {}
 
-        # Initialize XGBoost regressors
-        xgb_model_acc = XGBRegressor(random_state=42)
-        xgb_model_precision = XGBRegressor(random_state=42)
-        xgb_model_recall = XGBRegressor(random_state=42)
-        xgb_model_f1 = XGBRegressor(random_state=42)
-        xgb_model_auc = XGBRegressor(random_state=42)
+            for metric in metric_names:
+                y_train, y_test = (
+                    y_meta[metric][train_idx],
+                    y_meta[metric][test_idx],
+                )
+                y_train_tensor = torch.tensor(
+                    y_train, dtype=torch.float32
+                ).unsqueeze(1)
+                y_test_values[metric] = y_test
+                y_train_tensors[metric] = y_train_tensor
 
-        # Train XGBoost models
-        xgb_model_acc.fit(X_train_meta, y_train_acc)
-        xgb_model_precision.fit(X_train_meta, y_train_precision)
-        xgb_model_recall.fit(X_train_meta, y_train_recall)
-        xgb_model_f1.fit(X_train_meta, y_train_f1)
-        xgb_model_auc.fit(X_train_meta, y_train_auc)
+                # Neural Network model
+                model_nn = MetaModel(input_size)
+                optimizer = optim.Adam(model_nn.parameters(), lr=0.001)
+                meta_models_nn[metric] = model_nn
+                optimizers[metric] = optimizer
 
-        # Evaluate XGBoost models on test set
-        pred_acc_xgb = xgb_model_acc.predict(X_test_meta)
-        pred_precision_xgb = xgb_model_precision.predict(X_test_meta)
-        pred_recall_xgb = xgb_model_recall.predict(X_test_meta)
-        pred_f1_xgb = xgb_model_f1.predict(X_test_meta)
-        pred_auc_xgb = xgb_model_auc.predict(X_test_meta)
+                # XGBoost model
+                model_xgb = XGBRegressor(random_state=42)
+                meta_models_xgb[metric] = model_xgb
 
-        acc_error_xgb = mean_absolute_error(y_test_acc, pred_acc_xgb)
-        precision_error_xgb = mean_absolute_error(
-            y_test_precision, pred_precision_xgb
-        )
-        recall_error_xgb = mean_absolute_error(y_test_recall, pred_recall_xgb)
-        f1_error_xgb = mean_absolute_error(y_test_f1, pred_f1_xgb)
-        auc_error_xgb = mean_absolute_error(y_test_auc, pred_auc_xgb)
+            # Train neural network models
+            for metric in metric_names:
+                model_nn = meta_models_nn[metric]
+                optimizer = optimizers[metric]
+                y_train_tensor = y_train_tensors[metric]
+                model_nn = train_model(
+                    model_nn, optimizer, X_train_tensor, y_train_tensor
+                )
 
-        acc_errors_xgb.append(acc_error_xgb)
-        precision_errors_xgb.append(precision_error_xgb)
-        recall_errors_xgb.append(recall_error_xgb)
-        f1_errors_xgb.append(f1_error_xgb)
-        auc_errors_xgb.append(auc_error_xgb)
+            # Train XGBoost models
+            for metric in metric_names:
+                y_train = y_meta[metric][train_idx]
+                model_xgb = meta_models_xgb[metric]
+                model_xgb.fit(X_train_meta, y_train)
 
-    mean_acc_abs_error_nn = np.mean(acc_errors_nn)
-    mean_precision_abs_error_nn = np.mean(precision_errors_nn)
-    mean_recall_abs_error_nn = np.mean(recall_errors_nn)
-    mean_f1_abs_error_nn = np.mean(f1_errors_nn)
-    mean_auc_abs_error_nn = np.mean(auc_errors_nn)
+            # Evaluate models on test set
+            for metric in metric_names:
+                y_test = y_test_values[metric]
 
-    mean_acc_abs_error_xgb = np.mean(acc_errors_xgb)
-    mean_precision_abs_error_xgb = np.mean(precision_errors_xgb)
-    mean_recall_abs_error_xgb = np.mean(recall_errors_xgb)
-    mean_f1_abs_error_xgb = np.mean(f1_errors_xgb)
-    mean_auc_abs_error_xgb = np.mean(auc_errors_xgb)
+                # Neural Network predictions
+                model_nn = meta_models_nn[metric]
+                model_nn.eval()
+                with torch.no_grad():
+                    pred_nn = model_nn(X_test_tensor).numpy().flatten()
+                error_nn = mean_absolute_error(y_test, pred_nn)
+                errors_nn[metric].append(error_nn)
+
+                # XGBoost predictions
+                model_xgb = meta_models_xgb[metric]
+                pred_xgb = model_xgb.predict(X_test_meta)
+                error_xgb = mean_absolute_error(y_test, pred_xgb)
+                errors_xgb[metric].append(error_xgb)
+
+        # Compute mean errors
+        mean_errors_nn = {
+            metric: np.mean(errors_nn[metric]) for metric in metric_names
+        }
+        mean_errors_xgb = {
+            metric: np.mean(errors_xgb[metric]) for metric in metric_names
+        }
+
+        return mean_errors_nn, mean_errors_xgb
+
+    mean_errors_nn, mean_errors_xgb = train_evaluate_meta_models(
+        X_meta_scaled, y_meta, groups, metric_names
+    )
 
     print("\nMeta-models training completed with cross-validation.")
 
     # Log evaluation metrics in MLflow
-    mlflow.log_metric("mean_acc_abs_error_nn", mean_acc_abs_error_nn)
-    mlflow.log_metric(
-        "mean_precision_abs_error_nn", mean_precision_abs_error_nn
-    )
-    mlflow.log_metric("mean_recall_abs_error_nn", mean_recall_abs_error_nn)
-    mlflow.log_metric("mean_f1_abs_error_nn", mean_f1_abs_error_nn)
-    mlflow.log_metric("mean_auc_abs_error_nn", mean_auc_abs_error_nn)
+    for metric in metric_names:
+        mlflow.log_metric(
+            f"mean_{metric}_abs_error_nn", mean_errors_nn[metric]
+        )
+        mlflow.log_metric(
+            f"mean_{metric}_abs_error_xgb", mean_errors_xgb[metric]
+        )
 
-    mlflow.log_metric("mean_acc_abs_error_xgb", mean_acc_abs_error_xgb)
-    mlflow.log_metric(
-        "mean_precision_abs_error_xgb", mean_precision_abs_error_xgb
-    )
-    mlflow.log_metric("mean_recall_abs_error_xgb", mean_recall_abs_error_xgb)
-    mlflow.log_metric("mean_f1_abs_error_xgb", mean_f1_abs_error_xgb)
-    mlflow.log_metric("mean_auc_abs_error_xgb", mean_auc_abs_error_xgb)
-
-    print(
-        f"\nMean Absolute Error of Accuracy Meta-Model (Neural Network): {mean_acc_abs_error_nn:.4f}"
-    )
-    print(
-        f"Mean Absolute Error of Precision Meta-Model (Neural Network): {mean_precision_abs_error_nn:.4f}"
-    )
-    print(
-        f"Mean Absolute Error of Recall Meta-Model (Neural Network): {mean_recall_abs_error_nn:.4f}"
-    )
-    print(
-        f"Mean Absolute Error of F1-Score Meta-Model (Neural Network): {mean_f1_abs_error_nn:.4f}"
-    )
-    print(
-        f"Mean Absolute Error of AUC-ROC Meta-Model (Neural Network): {mean_auc_abs_error_nn:.4f}"
-    )
-
-    print(
-        f"\nMean Absolute Error of Accuracy Meta-Model (XGBoost): {mean_acc_abs_error_xgb:.4f}"
-    )
-    print(
-        f"Mean Absolute Error of Precision Meta-Model (XGBoost): {mean_precision_abs_error_xgb:.4f}"
-    )
-    print(
-        f"Mean Absolute Error of Recall Meta-Model (XGBoost): {mean_recall_abs_error_xgb:.4f}"
-    )
-    print(
-        f"Mean Absolute Error of F1-Score Meta-Model (XGBoost): {mean_f1_abs_error_xgb:.4f}"
-    )
-    print(
-        f"Mean Absolute Error of AUC-ROC Meta-Model (XGBoost): {mean_auc_abs_error_xgb:.4f}"
-    )
-
-    # Log meta-models in MLflow
-    mlflow.pytorch.log_model(meta_model_acc, "meta_model_accuracy_nn")
-    mlflow.pytorch.log_model(meta_model_precision, "meta_model_precision_nn")
-    mlflow.pytorch.log_model(meta_model_recall, "meta_model_recall_nn")
-    mlflow.pytorch.log_model(meta_model_f1, "meta_model_f1_score_nn")
-    mlflow.pytorch.log_model(meta_model_auc, "meta_model_auc_roc_nn")
-
-    # Log XGBoost models
-    mlflow.sklearn.log_model(xgb_model_acc, "meta_model_accuracy_xgb")
-    mlflow.sklearn.log_model(xgb_model_precision, "meta_model_precision_xgb")
-    mlflow.sklearn.log_model(xgb_model_recall, "meta_model_recall_xgb")
-    mlflow.sklearn.log_model(xgb_model_f1, "meta_model_f1_score_xgb")
-    mlflow.sklearn.log_model(xgb_model_auc, "meta_model_auc_roc_xgb")
-
-    print("Meta-models logged to MLflow.")
+    for metric in metric_names:
+        print(
+            f"\nMean Absolute Error of {metric.replace('_', ' ').title()} Meta-Model (Neural Network): {mean_errors_nn[metric]:.4f}"
+        )
+        print(
+            f"Mean Absolute Error of {metric.replace('_', ' ').title()} Meta-Model (XGBoost): {mean_errors_xgb[metric]:.4f}"
+        )
 
     print(
         "\nStep 6: Predict metrics for each dataset and model using the best meta-models."
     )
 
-    # For simplicity, let's assume XGBoost performed better and use it for predictions
     # Retrain XGBoost models on the entire meta-dataset
-    xgb_model_acc_final = XGBRegressor(random_state=42)
-    xgb_model_precision_final = XGBRegressor(random_state=42)
-    xgb_model_recall_final = XGBRegressor(random_state=42)
-    xgb_model_f1_final = XGBRegressor(random_state=42)
-    xgb_model_auc_final = XGBRegressor(random_state=42)
-
-    xgb_model_acc_final.fit(X_meta_scaled, y_meta_acc)
-    xgb_model_precision_final.fit(X_meta_scaled, y_meta_precision)
-    xgb_model_recall_final.fit(X_meta_scaled, y_meta_recall)
-    xgb_model_f1_final.fit(X_meta_scaled, y_meta_f1)
-    xgb_model_auc_final.fit(X_meta_scaled, y_meta_auc)
-
-    # Save the final models
-    mlflow.sklearn.log_model(
-        xgb_model_acc_final, "final_meta_model_accuracy_xgb"
-    )
-    mlflow.sklearn.log_model(
-        xgb_model_precision_final, "final_meta_model_precision_xgb"
-    )
-    mlflow.sklearn.log_model(
-        xgb_model_recall_final, "final_meta_model_recall_xgb"
-    )
-    mlflow.sklearn.log_model(
-        xgb_model_f1_final, "final_meta_model_f1_score_xgb"
-    )
-    mlflow.sklearn.log_model(
-        xgb_model_auc_final, "final_meta_model_auc_roc_xgb"
-    )
+    final_meta_models = {}
+    for metric in metric_names:
+        xgb_model_final = XGBRegressor(random_state=42)
+        xgb_model_final.fit(X_meta_scaled, y_meta[metric])
+        final_meta_models[metric] = xgb_model_final
+        # Save the final models
+        mlflow.sklearn.log_model(
+            xgb_model_final, f"final_meta_model_{metric}_xgb"
+        )
 
     # Predict on the meta-dataset
-    predicted_acc = xgb_model_acc_final.predict(X_meta_scaled)
-    predicted_precision = xgb_model_precision_final.predict(X_meta_scaled)
-    predicted_recall = xgb_model_recall_final.predict(X_meta_scaled)
-    predicted_f1 = xgb_model_f1_final.predict(X_meta_scaled)
-    predicted_auc = xgb_model_auc_final.predict(X_meta_scaled)
-
     predictions_df = meta_dataset_expanded.copy()
-    predictions_df["predicted_accuracy"] = predicted_acc
-    predictions_df["predicted_precision"] = predicted_precision
-    predictions_df["predicted_recall"] = predicted_recall
-    predictions_df["predicted_f1_score"] = predicted_f1
-    predictions_df["predicted_auc_roc"] = predicted_auc
+    for metric in metric_names:
+        predicted = final_meta_models[metric].predict(X_meta_scaled)
+        predictions_df[f"predicted_{metric}"] = predicted
 
     for idx, row in predictions_df.iterrows():
         print(f"{row['dataset_name']} - {row['model_name']}:")
-        print(f"  Predicted Accuracy: {row['predicted_accuracy']:.4f}")
-        print(f"  Actual Accuracy: {row['accuracy_test']:.4f}")
-        print(f"  Predicted Precision: {row['predicted_precision']:.4f}")
-        print(f"  Actual Precision: {row['precision_test']:.4f}")
-        print(f"  Predicted Recall: {row['predicted_recall']:.4f}")
-        print(f"  Actual Recall: {row['recall_test']:.4f}")
-        print(f"  Predicted F1-Score: {row['predicted_f1_score']:.4f}")
-        print(f"  Actual F1-Score: {row['f1_score_test']:.4f}")
-        print(f"  Predicted AUC-ROC: {row['predicted_auc_roc']:.4f}")
-        print(f"  Actual AUC-ROC: {row['auc_roc_test']:.4f}")
+        for split in ["val", "test"]:
+            print(
+                f"  Predicted Accuracy ({split}): {row[f'predicted_accuracy_{split}']:.4f}"
+            )
+            print(
+                f"  Actual Accuracy ({split}): {row[f'accuracy_{split}']:.4f}"
+            )
+            print(
+                f"  Predicted Precision ({split}): {row[f'predicted_precision_{split}']:.4f}"
+            )
+            print(
+                f"  Actual Precision ({split}): {row[f'precision_{split}']:.4f}"
+            )
+            print(
+                f"  Predicted Recall ({split}): {row[f'predicted_recall_{split}']:.4f}"
+            )
+            print(f"  Actual Recall ({split}): {row[f'recall_{split}']:.4f}")
+            print(
+                f"  Predicted F1-Score ({split}): {row[f'predicted_f1_score_{split}']:.4f}"
+            )
+            print(
+                f"  Actual F1-Score ({split}): {row[f'f1_score_{split}']:.4f}"
+            )
+            print(
+                f"  Predicted AUC-ROC ({split}): {row[f'predicted_auc_roc_{split}']:.4f}"
+            )
+            print(f"  Actual AUC-ROC ({split}): {row[f'auc_roc_{split}']:.4f}")
 
     print(
         "\nStep 7: Compile predictions and compare predicted metrics with actual metrics."
     )
 
-    print(
-        predictions_df[
-            [
-                "dataset_name",
-                "model_name",
-                "predicted_accuracy",
-                "accuracy_test",
-                "predicted_precision",
-                "precision_test",
-                "predicted_recall",
-                "recall_test",
-                "predicted_f1_score",
-                "f1_score_test",
-                "predicted_auc_roc",
-                "auc_roc_test",
-            ]
-        ]
-    )
+    print(predictions_df.head())
 
     print("\nStep 8: Evaluate the meta-models' performance.")
 
-    predictions_df["acc_abs_error"] = abs(
-        predictions_df["predicted_accuracy"] - predictions_df["accuracy_test"]
-    )
-    predictions_df["precision_abs_error"] = abs(
-        predictions_df["predicted_precision"]
-        - predictions_df["precision_test"]
-    )
-    predictions_df["recall_abs_error"] = abs(
-        predictions_df["predicted_recall"] - predictions_df["recall_test"]
-    )
-    predictions_df["f1_abs_error"] = abs(
-        predictions_df["predicted_f1_score"] - predictions_df["f1_score_test"]
-    )
-    predictions_df["auc_abs_error"] = abs(
-        predictions_df["predicted_auc_roc"] - predictions_df["auc_roc_test"]
-    )
+    for split in ["val", "test"]:
+        for metric in [
+            "accuracy",
+            "precision",
+            "recall",
+            "f1_score",
+            "auc_roc",
+        ]:
+            predictions_df[f"{metric}_abs_error_{split}"] = abs(
+                predictions_df[f"predicted_{metric}_{split}"]
+                - predictions_df[f"{metric}_{split}"]
+            )
 
-    mean_acc_abs_error = predictions_df["acc_abs_error"].mean()
-    mean_precision_abs_error = predictions_df["precision_abs_error"].mean()
-    mean_recall_abs_error = predictions_df["recall_abs_error"].mean()
-    mean_f1_abs_error = predictions_df["f1_abs_error"].mean()
-    mean_auc_abs_error = predictions_df["auc_abs_error"].mean()
+        mean_acc_abs_error = predictions_df[
+            f"accuracy_abs_error_{split}"
+        ].mean()
+        mean_precision_abs_error = predictions_df[
+            f"precision_abs_error_{split}"
+        ].mean()
+        mean_recall_abs_error = predictions_df[
+            f"recall_abs_error_{split}"
+        ].mean()
+        mean_f1_abs_error = predictions_df[
+            f"f1_score_abs_error_{split}"
+        ].mean()
+        mean_auc_abs_error = predictions_df[
+            f"auc_roc_abs_error_{split}"
+        ].mean()
 
-    print(
-        f"\nMean Absolute Error of Accuracy Meta-Model: {mean_acc_abs_error:.4f}"
-    )
-    print(
-        f"Mean Absolute Error of Precision Meta-Model: {mean_precision_abs_error:.4f}"
-    )
-    print(
-        f"Mean Absolute Error of Recall Meta-Model: {mean_recall_abs_error:.4f}"
-    )
-    print(
-        f"Mean Absolute Error of F1-Score Meta-Model: {mean_f1_abs_error:.4f}"
-    )
-    print(
-        f"Mean Absolute Error of AUC-ROC Meta-Model: {mean_auc_abs_error:.4f}"
-    )
+        print(
+            f"\nMean Absolute Error of Accuracy Meta-Model ({split} set): {mean_acc_abs_error:.4f}"
+        )
+        print(
+            f"Mean Absolute Error of Precision Meta-Model ({split} set): {mean_precision_abs_error:.4f}"
+        )
+        print(
+            f"Mean Absolute Error of Recall Meta-Model ({split} set): {mean_recall_abs_error:.4f}"
+        )
+        print(
+            f"Mean Absolute Error of F1-Score Meta-Model ({split} set): {mean_f1_abs_error:.4f}"
+        )
+        print(
+            f"Mean Absolute Error of AUC-ROC Meta-Model ({split} set): {mean_auc_abs_error:.4f}"
+        )
 
-    # Log evaluation metrics in MLflow
-    mlflow.log_metric("mean_acc_abs_error_final", mean_acc_abs_error)
-    mlflow.log_metric(
-        "mean_precision_abs_error_final", mean_precision_abs_error
-    )
-    mlflow.log_metric("mean_recall_abs_error_final", mean_recall_abs_error)
-    mlflow.log_metric("mean_f1_abs_error_final", mean_f1_abs_error)
-    mlflow.log_metric("mean_auc_abs_error_final", mean_auc_abs_error)
+        # Log evaluation metrics in MLflow
+        mlflow.log_metric(
+            f"mean_acc_abs_error_{split}_final", mean_acc_abs_error
+        )
+        mlflow.log_metric(
+            f"mean_precision_abs_error_{split}_final", mean_precision_abs_error
+        )
+        mlflow.log_metric(
+            f"mean_recall_abs_error_{split}_final", mean_recall_abs_error
+        )
+        mlflow.log_metric(
+            f"mean_f1_abs_error_{split}_final", mean_f1_abs_error
+        )
+        mlflow.log_metric(
+            f"mean_auc_abs_error_{split}_final", mean_auc_abs_error
+        )
 
     # Save the predictions DataFrame to a CSV file
     output_file_path = "meta_model_predictions_multiclass.csv"
@@ -813,43 +645,51 @@ with mlflow.start_run(run_name=f"META_RUN_{randomnumber}"):
     print(f"Predictions CSV saved and logged to MLflow as an artifact.")
 
     # Plot and log comparisons between predicted and actual metrics
-    for metric in ["accuracy", "precision", "recall", "f1_score", "auc_roc"]:
-        plt.figure(figsize=(12, 8))
-        for dataset_name in predictions_df["dataset_name"].unique():
-            df_subset = predictions_df[
-                predictions_df["dataset_name"] == dataset_name
-            ]
-            plt.plot(
-                df_subset["model_name"],
-                df_subset[f"{metric}_test"],
-                label=f"{dataset_name} - Actual",
-                marker="o",
+    for split in ["val", "test"]:
+        for metric in [
+            "accuracy",
+            "precision",
+            "recall",
+            "f1_score",
+            "auc_roc",
+        ]:
+            plt.figure(figsize=(12, 8))
+            for dataset_name in predictions_df["dataset_name"].unique():
+                df_subset = predictions_df[
+                    predictions_df["dataset_name"] == dataset_name
+                ]
+                plt.plot(
+                    df_subset["model_name"],
+                    df_subset[f"{metric}_{split}"],
+                    label=f"{dataset_name} - Actual ({split})",
+                    marker="o",
+                )
+                plt.plot(
+                    df_subset["model_name"],
+                    df_subset[f"predicted_{metric}_{split}"],
+                    "--",
+                    marker="x",
+                    label=f"{dataset_name} - Predicted ({split})",
+                )
+
+            split_ratio = split_ratios.get(split, "Unknown")
+            plt.title(
+                f"Predicted vs Actual {metric.replace('_', ' ').capitalize()} on {split.capitalize()} Set ({split_ratio*100:.0f}% of data)"
             )
-            plt.plot(
-                df_subset["model_name"],
-                df_subset[f"predicted_{metric}"],
-                "--",
-                marker="x",
-                label=f"{dataset_name} - Predicted",
+            plt.xlabel("Model")
+            plt.ylabel(metric.replace("_", " ").capitalize())
+            plt.xticks(rotation=45)
+            plt.legend(loc="upper right")
+            plt.grid(True)
+            plt.tight_layout()
+
+            # Save the plot
+            plot_filename = f"{metric}_{split}_comparison_plot.png"
+            plt.savefig(plot_filename)
+
+            # Log the plot as an artifact
+            mlflow.log_artifact(plot_filename)
+
+            print(
+                f"{metric.replace('_', ' ').capitalize()} comparison plot for {split} set saved and logged to MLflow as an artifact."
             )
-
-        plt.title(
-            f"Predicted vs Actual {metric.replace('_', ' ').capitalize()} on Test Set"
-        )
-        plt.xlabel("Model")
-        plt.ylabel(metric.replace("_", " ").capitalize())
-        plt.xticks(rotation=45)
-        plt.legend(loc="upper right")
-        plt.grid(True)
-        plt.tight_layout()
-
-        # Save the plot
-        plot_filename = f"{metric}_comparison_plot.png"
-        plt.savefig(plot_filename)
-
-        # Log the plot as an artifact
-        mlflow.log_artifact(plot_filename)
-
-        print(
-            f"{metric.replace('_', ' ').capitalize()} comparison plot saved and logged to MLflow as an artifact."
-        )
