@@ -210,12 +210,12 @@ with mlflow.start_run(run_name=f"META_RUN_{randomnumber}"):
 
         # Split data into train, validation, and test sets
         X_temp, X_test, y_temp, y_test = train_test_split(
-            X_scaled, y, test_size=0.1, stratify=y, random_state=42
+            X_scaled, y, test_size=0.2, stratify=y, random_state=42
         )
         X_train, X_val, y_train, y_val = train_test_split(
-            X_temp, y_temp, test_size=0.1, stratify=y_temp, random_state=42
+            X_temp, y_temp, test_size=0.25, stratify=y_temp, random_state=42
         )
-        # Now, X_train: 81%, X_val: 9%, X_test: 10%
+        # Now, X_train: 60%, X_val: 20%, X_test: 20%
 
         meta_features = {}
         meta_features["dataset_name"] = dataset_name
