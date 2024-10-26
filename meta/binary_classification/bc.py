@@ -7,8 +7,6 @@ import mlflow.sklearn
 import numpy as np
 import pandas as pd
 import torch
-import torch.nn as nn
-import torch.optim as optim
 from scipy.stats import entropy, kurtosis, skew
 from sklearn.datasets import load_breast_cancer
 from sklearn.decomposition import PCA
@@ -26,7 +24,6 @@ from sklearn.model_selection import GroupKFold, train_test_split
 from sklearn.naive_bayes import GaussianNB
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import LabelEncoder, StandardScaler
-from sklearn.svm import SVC
 from sklearn.tree import DecisionTreeClassifier
 from xgboost import XGBClassifier, XGBRegressor
 
@@ -416,37 +413,6 @@ with mlflow.start_run(run_name=f"META_RUN_{randomnumber}"):
 
     groups = meta_dataset["dataset_name"].values
 
-    # Define neural network architecture
-    class MetaModel(nn.Module):
-        def __init__(self, input_size):
-            super(MetaModel, self).__init__()
-            self.fc1 = nn.Linear(input_size, 64)
-            self.bn1 = nn.BatchNorm1d(64)
-            self.fc2 = nn.Linear(64, 32)
-            self.bn2 = nn.BatchNorm1d(32)
-            self.fc3 = nn.Linear(32, 1)
-            self.relu = nn.ReLU()
-            self.dropout = nn.Dropout(0.2)
-
-        def forward(self, x):
-            x = self.relu(self.bn1(self.fc1(x)))
-            x = self.dropout(x)
-            x = self.relu(self.bn2(self.fc2(x)))
-            x = self.dropout(x)
-            x = self.fc3(x)
-            return x
-
-    # Training function for neural network
-    def train_model(model, optimizer, X, y, num_epochs=500):
-        for epoch in range(num_epochs):
-            model.train()
-            optimizer.zero_grad()
-            outputs = model(X)
-            loss = torch.sqrt(nn.MSELoss()(outputs, y))
-            loss.backward()
-            optimizer.step()
-        return model
-
     # Function to train and evaluate meta-models
     def train_and_evaluate_meta_model(
         X_meta_scaled, y_meta, groups, model_type="xgb", metric_name=""
@@ -472,37 +438,6 @@ with mlflow.start_run(run_name=f"META_RUN_{randomnumber}"):
                 pred_meta = xgb_model.predict(X_test_meta)
                 error = mean_absolute_error(y_test_meta, pred_meta)
                 errors.append(error)
-            elif model_type == "nn":
-                # Convert to tensors
-                X_train_tensor = torch.tensor(
-                    X_train_meta, dtype=torch.float32
-                )
-                y_train_tensor = torch.tensor(
-                    y_train_meta, dtype=torch.float32
-                ).unsqueeze(1)
-                X_test_tensor = torch.tensor(X_test_meta, dtype=torch.float32)
-                y_test_tensor = torch.tensor(
-                    y_test_meta, dtype=torch.float32
-                ).unsqueeze(1)
-
-                # Initialize model
-                input_size = X_train_meta.shape[1]
-                meta_model_nn = MetaModel(input_size)
-
-                # Loss function and optimizer
-                optimizer_nn = optim.Adam(meta_model_nn.parameters(), lr=0.001)
-
-                # Train neural network model
-                meta_model_nn = train_model(
-                    meta_model_nn, optimizer_nn, X_train_tensor, y_train_tensor
-                )
-
-                # Evaluate neural network model on test set
-                meta_model_nn.eval()
-                with torch.no_grad():
-                    pred_meta = meta_model_nn(X_test_tensor).numpy().flatten()
-                error = mean_absolute_error(y_test_meta, pred_meta)
-                errors.append(error)
             else:
                 raise ValueError(f"Unknown model type: {model_type}")
 
@@ -520,22 +455,6 @@ with mlflow.start_run(run_name=f"META_RUN_{randomnumber}"):
             # Train XGBoost model
             xgb_model_final.fit(X_meta_scaled, y_meta)
             return xgb_model_final
-        elif model_type == "nn":
-            # Convert to tensors
-            X_tensor = torch.tensor(X_meta_scaled, dtype=torch.float32)
-            y_tensor = torch.tensor(y_meta, dtype=torch.float32).unsqueeze(1)
-            # Initialize model
-            input_size = X_meta_scaled.shape[1]
-            meta_model_nn_final = MetaModel(input_size)
-            # Loss function and optimizer
-            optimizer_nn = optim.Adam(
-                meta_model_nn_final.parameters(), lr=0.001
-            )
-            # Train neural network model
-            meta_model_nn_final = train_model(
-                meta_model_nn_final, optimizer_nn, X_tensor, y_tensor
-            )
-            return meta_model_nn_final
         else:
             raise ValueError(f"Unknown model type: {model_type}")
 
