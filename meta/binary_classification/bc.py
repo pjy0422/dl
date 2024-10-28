@@ -39,21 +39,26 @@ from sklearn.feature_selection import (
     mutual_info_regression,
 )
 from sklearn.impute import SimpleImputer
-from sklearn.linear_model import LogisticRegression
+from sklearn.linear_model import LinearRegression, LogisticRegression
 from sklearn.metrics import (
     accuracy_score,
     f1_score,
     mean_absolute_error,
+    mean_squared_error,
+    r2_score,
     roc_auc_score,
 )
-from sklearn.model_selection import (
+from sklearn.model_selection import (  # Imported for RandomizedSearch
     GridSearchCV,
+    RandomizedSearchCV,
     StratifiedKFold,
+    cross_val_score,
     train_test_split,
 )
 from sklearn.naive_bayes import GaussianNB
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.preprocessing import LabelEncoder, StandardScaler
+from sklearn.svm import SVR
 from sklearn.tree import DecisionTreeClassifier
 from xgboost import XGBClassifier, XGBRegressor
 
@@ -160,6 +165,22 @@ class MLflowManager:
                 ),
             ):
                 mlflow.xgboost.log_model(model, artifact_path)
+            elif isinstance(
+                model,
+                (
+                    lgb.LGBMClassifier,
+                    lgb.LGBMRegressor,
+                ),
+            ):
+                mlflow.lightgbm.log_model(model, artifact_path)
+            elif isinstance(
+                model,
+                (
+                    cb.CatBoostClassifier,
+                    cb.CatBoostRegressor,
+                ),
+            ):
+                mlflow.catboost.log_model(model, artifact_path)
             else:
                 mlflow.sklearn.log_model(model, artifact_path)
             logging.info(f"Logged model: {artifact_path}")
@@ -643,48 +664,114 @@ class MetaModelManager:
         metric_name="",
         mlflow_manager=None,
     ):
-        if model_type != "xgb":
+        logging.info(
+            f"  Training Meta-Model for {metric_name} using {model_type.upper()}..."
+        )
+        # Define hyperparameter grids for different models
+        param_distributions = {}
+        models = {}
+
+        if model_type == "xgb":
+            models["xgb"] = XGBRegressor(
+                random_state=42, objective="reg:squarederror"
+            )
+            param_distributions["xgb"] = {
+                "n_estimators": [100, 200, 300, 400, 500],
+                "max_depth": [3, 5, 7, 9, 11, 13, 15, 17],
+                "subsample": [0.6, 0.7, 0.8, 0.9, 1.0],
+            }
+        elif model_type == "rf":
+            models["rf"] = RandomForestRegressor(random_state=42)
+            param_distributions["rf"] = {
+                "n_estimators": [100, 200, 300, 400, 500],
+                "max_depth": [None, 10, 20, 30, 40, 50],
+                "max_features": ["auto", "sqrt", "log2"],
+                "min_samples_split": [2, 5, 10],
+                "min_samples_leaf": [1, 2, 4],
+                "bootstrap": [True, False],
+            }
+        elif model_type == "lgbm":
+            models["lgbm"] = lgb.LGBMRegressor(random_state=42)
+            param_distributions["lgbm"] = {
+                "n_estimators": [100, 200, 300, 400, 500],
+                "num_leaves": [31, 50, 100, 150],
+                "learning_rate": [0.01, 0.05, 0.1, 0.2],
+                "subsample": [0.6, 0.7, 0.8, 0.9, 1.0],
+                "colsample_bytree": [0.6, 0.7, 0.8, 0.9, 1.0],
+                "reg_alpha": [0, 0.01, 0.1, 1],
+                "reg_lambda": [1, 1.5, 2, 2.5, 3],
+                "min_split_gain": [0, 0.1, 0.2, 0.3],
+            }
+        elif model_type == "cb":
+            models["cb"] = cb.CatBoostRegressor(random_state=42, silent=True)
+            param_distributions["cb"] = {
+                "iterations": [100, 200, 300, 400, 500],
+                "depth": [4, 6, 8, 10, 12],
+                "learning_rate": [0.01, 0.05, 0.1, 0.2],
+                "l2_leaf_reg": [1, 3, 5, 7, 9],
+                "bagging_temperature": [0, 0.1, 0.2, 0.3, 0.4],
+                "border_count": [32, 64, 128, 256],
+            }
+        elif model_type == "svr":
+            models["svr"] = SVR()
+            param_distributions["svr"] = {
+                "C": [0.1, 1, 10, 100],
+                "gamma": ["scale", "auto", 0.001, 0.01, 0.1],
+                "kernel": ["linear", "rbf", "poly", "sigmoid"],
+                "degree": [2, 3, 4],  # Relevant for 'poly' kernel
+                "epsilon": [0.1, 0.2, 0.5, 1],
+            }
+        else:
             logging.error(
                 f"Unsupported model type for meta-model: {model_type}"
             )
             return None, None, None
 
-        logging.info(
-            f"  Training Meta-Model for {metric_name} using {model_type.upper()}..."
-        )
-        # Hyperparameter tuning
-        if model_type == "xgb":
-            xgb_model = XGBRegressor(
-                random_state=42, objective="reg:squarederror"
-            )
-            param_grid = {
-                "n_estimators": [100, 200],
-                "max_depth": [3, 5, 7],
-                "learning_rate": [0.01, 0.1, 0.2],
-                "subsample": [0.7, 0.8, 1.0],
-            }
-            grid_search = GridSearchCV(
-                xgb_model,
-                param_grid,
-                cv=3,
+        best_model = None
+        best_score = float("inf")
+        best_params = {}
+        best_model_name = ""
+
+        for name, model in models.items():
+            param_dist = param_distributions[name]
+            randomized_search = RandomizedSearchCV(
+                model,
+                param_distributions=param_dist,
                 scoring="neg_mean_absolute_error",
+                cv=5,
                 n_jobs=-1,
-                verbose=0,
+                verbose=1,
+                n_iter=500,  # Number of parameter settings that are sampled
+                random_state=41,  # For reproducibility
             )
-            grid_search.fit(X_train, y_train)
-            best_model = grid_search.best_estimator_
-            logging.info(
-                f"    - Best XGBoost params: {grid_search.best_params_}"
-            )
-            # Evaluate on training set
-            pred_train = best_model.predict(X_train)
-            error_train = mean_absolute_error(y_train, pred_train)
-            # Evaluate on test set
-            pred_test = best_model.predict(X_test)
-            error_test = mean_absolute_error(y_test, pred_test)
+            randomized_search.fit(X_train, y_train)
+            if randomized_search.best_score_ < best_score:
+                best_score = randomized_search.best_score_
+                best_model = randomized_search.best_estimator_
+                best_params = randomized_search.best_params_
+                best_model_name = name
 
         logging.info(
-            f"    - Mean Absolute Error on Training Set: {error_train:.4f}"
+            f"    - Best {best_model_name.upper()} params: {best_params}"
+        )
+
+        # Evaluate on training set using cross-validation
+        cv_scores = cross_val_score(
+            best_model,
+            X_train,
+            y_train,
+            cv=5,
+            scoring="neg_mean_absolute_error",
+            n_jobs=-1,
+        )
+        error_train = -cv_scores.mean()
+
+        # Evaluate on test set
+        pred_test = best_model.predict(X_test)
+        error_test = mean_absolute_error(y_test, pred_test)
+
+        logging.info(
+            f"    - Mean Absolute Error on Training Set (CV): {error_train:.4f}"
         )
         logging.info(
             f"    - Mean Absolute Error on Test Set: {error_test:.4f}"
@@ -696,6 +783,9 @@ class MetaModelManager:
             )
             mlflow_manager.log_metric(
                 f"mean_abs_error_{metric_name}_test_{model_type}", error_test
+            )
+            mlflow_manager.log_param(
+                f"best_params_{metric_name}_{model_type}", best_params
             )
 
         return best_model, error_train, error_test
@@ -868,42 +958,55 @@ class MetaLearningPipeline:
         self.mlflow_manager.log_artifact("meta_dataset_test.csv")
 
         # Prepare data for meta-models
+        # Separate dataset meta-features and model_name
         X_meta_val = meta_dataset_val.drop(
-            ["dataset_name", "accuracy", "f1_score", "auc_roc"],
-            axis=1,
+            ["dataset_name", "accuracy", "f1_score", "auc_roc"], axis=1
         )
-
-        # One-Hot Encode model names
-        X_meta_val = pd.get_dummies(X_meta_val, columns=["model_name"])
-
-        # Prepare test data
         X_meta_test = meta_dataset_test.drop(
-            ["dataset_name", "accuracy", "f1_score", "auc_roc"],
-            axis=1,
+            ["dataset_name", "accuracy", "f1_score", "auc_roc"], axis=1
         )
-        # One-Hot Encode model names
-        X_meta_test = pd.get_dummies(X_meta_test, columns=["model_name"])
 
-        # Ensure that train and test sets have the same columns
-        X_meta_val, X_meta_test = X_meta_val.align(
-            X_meta_test, join="left", axis=1, fill_value=0
+        # One-Hot Encode model names
+        model_names_val = pd.get_dummies(
+            X_meta_val["model_name"], prefix="model"
+        )
+        X_meta_val = X_meta_val.drop("model_name", axis=1)
+
+        model_names_test = pd.get_dummies(
+            X_meta_test["model_name"], prefix="model"
+        )
+        X_meta_test = X_meta_test.drop("model_name", axis=1)
+
+        # Scale the dataset meta-features only
+        scaler_meta = StandardScaler()
+        X_meta_features_val = scaler_meta.fit_transform(X_meta_val)
+        X_meta_features_test = scaler_meta.transform(X_meta_test)
+
+        # Ensure that model_name one-hot encoded features are aligned
+        model_names_val, model_names_test = model_names_val.align(
+            model_names_test, join="left", axis=1, fill_value=0
+        )
+
+        # Concatenate scaled meta-features with unscaled model_name features
+        X_meta_val_processed = np.hstack(
+            [X_meta_features_val, model_names_val.values]
+        )
+        X_meta_test_processed = np.hstack(
+            [X_meta_features_test, model_names_test.values]
         )
 
         # Handle NaN values in meta-features
-        def handle_nan(df):
-            # Fill with mean
-            df = df.fillna(df.mean())
-            # For any columns that are still NaN (e.g., columns with all NaN), fill with zero
-            df = df.fillna(0)
-            return df
+        def handle_nan(array):
+            # Assuming array is already numpy and scaled
+            array = np.nan_to_num(array, nan=0.0)
+            return array
 
-        X_meta_val = handle_nan(X_meta_val)
-        X_meta_test = handle_nan(X_meta_test)
+        X_meta_val_processed = handle_nan(X_meta_val_processed)
+        X_meta_test_processed = handle_nan(X_meta_test_processed)
 
-        # Scale the meta-features
-        scaler_meta = StandardScaler()
-        X_meta_val_scaled = scaler_meta.fit_transform(X_meta_val)
-        X_meta_test_scaled = scaler_meta.transform(X_meta_test)
+        # Convert to numpy arrays if not already
+        X_meta_val_processed = np.array(X_meta_val_processed)
+        X_meta_test_processed = np.array(X_meta_test_processed)
 
         # Targets for meta-model training and testing (using validation split)
         y_meta_acc_val = meta_dataset_val["accuracy"].values
@@ -932,9 +1035,9 @@ class MetaLearningPipeline:
         # Accuracy Meta-Model
         xgb_model_acc_final, error_train_acc, error_test_acc = (
             meta_model_manager.train_and_evaluate_meta_model(
-                X_meta_val_scaled,
+                X_meta_val_processed,
                 y_meta_acc_val,
-                X_meta_test_scaled,
+                X_meta_test_processed,
                 y_meta_acc_test,
                 model_type="xgb",
                 metric_name="Accuracy",
@@ -945,9 +1048,9 @@ class MetaLearningPipeline:
         # F1-Score Meta-Model
         xgb_model_f1_final, error_train_f1, error_test_f1 = (
             meta_model_manager.train_and_evaluate_meta_model(
-                X_meta_val_scaled,
+                X_meta_val_processed,
                 y_meta_f1_val,
-                X_meta_test_scaled,
+                X_meta_test_processed,
                 y_meta_f1_test,
                 model_type="xgb",
                 metric_name="F1_Score",
@@ -958,9 +1061,9 @@ class MetaLearningPipeline:
         # AUC-ROC Meta-Model
         xgb_model_auc_final, error_train_auc, error_test_auc = (
             meta_model_manager.train_and_evaluate_meta_model(
-                X_meta_val_scaled,
+                X_meta_val_processed,
                 y_meta_auc_val,
-                X_meta_test_scaled,
+                X_meta_test_processed,
                 y_meta_auc_test,
                 model_type="xgb",
                 metric_name="AUC_ROC",
@@ -988,25 +1091,31 @@ class MetaLearningPipeline:
             "\nPredicting validation and test metrics using meta-models."
         )
         if xgb_model_acc_final:
-            predicted_acc_val = xgb_model_acc_final.predict(X_meta_val_scaled)
+            predicted_acc_val = xgb_model_acc_final.predict(
+                X_meta_val_processed
+            )
             predicted_acc_test = xgb_model_acc_final.predict(
-                X_meta_test_scaled
+                X_meta_test_processed
             )
         else:
             predicted_acc_val = np.zeros_like(y_meta_acc_val)
             predicted_acc_test = np.zeros_like(y_meta_acc_test)
 
         if xgb_model_f1_final:
-            predicted_f1_val = xgb_model_f1_final.predict(X_meta_val_scaled)
-            predicted_f1_test = xgb_model_f1_final.predict(X_meta_test_scaled)
+            predicted_f1_val = xgb_model_f1_final.predict(X_meta_val_processed)
+            predicted_f1_test = xgb_model_f1_final.predict(
+                X_meta_test_processed
+            )
         else:
             predicted_f1_val = np.zeros_like(y_meta_f1_val)
             predicted_f1_test = np.zeros_like(y_meta_f1_test)
 
         if xgb_model_auc_final:
-            predicted_auc_val = xgb_model_auc_final.predict(X_meta_val_scaled)
+            predicted_auc_val = xgb_model_auc_final.predict(
+                X_meta_val_processed
+            )
             predicted_auc_test = xgb_model_auc_final.predict(
-                X_meta_test_scaled
+                X_meta_test_processed
             )
         else:
             predicted_auc_val = np.zeros_like(y_meta_auc_val)
@@ -1022,6 +1131,43 @@ class MetaLearningPipeline:
         predictions_test_df["predicted_accuracy"] = predicted_acc_test
         predictions_test_df["predicted_f1_score"] = predicted_f1_test
         predictions_test_df["predicted_auc_roc"] = predicted_auc_test
+
+        # Print out comparison of predicted metrics and real metrics
+        logging.info(
+            "\nComparison of Predicted and Actual Metrics on Validation Set:"
+        )
+        logging.info(
+            predictions_val_df[
+                [
+                    "dataset_name",
+                    "model_name",
+                    "accuracy",
+                    "predicted_accuracy",
+                    "f1_score",
+                    "predicted_f1_score",
+                    "auc_roc",
+                    "predicted_auc_roc",
+                ]
+            ]
+        )
+
+        logging.info(
+            "\nComparison of Predicted and Actual Metrics on Test Set:"
+        )
+        logging.info(
+            predictions_test_df[
+                [
+                    "dataset_name",
+                    "model_name",
+                    "accuracy",
+                    "predicted_accuracy",
+                    "f1_score",
+                    "predicted_f1_score",
+                    "auc_roc",
+                    "predicted_auc_roc",
+                ]
+            ]
+        )
 
         # Save predictions
         predictions_val_df.to_csv(
@@ -1135,81 +1281,111 @@ class MetaLearningPipeline:
     def plot_and_log_comparisons(
         self, predictions_val_df, predictions_test_df
     ):
-        def plot_metric_comparison(df_val, df_test, metric, mlflow_manager):
-            plt.figure(figsize=(16, 8))
+        import seaborn as sns  # Import seaborn for better visualization
 
-            # Validation Set
-            plt.subplot(1, 2, 1)
-            for dataset_name in df_val["dataset_name"].unique():
-                df_subset = df_val[df_val["dataset_name"] == dataset_name]
-                plt.plot(
-                    df_subset["model_name"],
-                    df_subset[f"predicted_{metric}"],
-                    label=f"{dataset_name} - Predicted",
-                    marker="x",
-                )
-                plt.plot(
-                    df_subset["model_name"],
-                    df_subset[metric],
-                    "--",
-                    marker="o",
-                    label=f"{dataset_name} - Actual",
-                )
+        def plot_metric_comparison(df, metric, set_type, mlflow_manager):
 
-            plt.title(
-                f"Predicted vs Actual {metric.capitalize()} on Validation Set"
+            plt.figure(figsize=(18, 9))
+            sns.set(style="whitegrid")
+
+            # Aggregate data: calculate mean actual and predicted metrics per model
+            df_grouped = (
+                df.groupby("model_name")
+                .agg({metric: "mean", f"predicted_{metric}": "mean"})
+                .reset_index()
             )
-            plt.xlabel("Model")
-            plt.ylabel(metric.capitalize())
-            plt.xticks(rotation=45)
-            plt.legend(loc="upper right")
-            plt.grid(True)
 
-            # Test Set
-            plt.subplot(1, 2, 2)
-            for dataset_name in df_test["dataset_name"].unique():
-                df_subset = df_test[df_test["dataset_name"] == dataset_name]
-                plt.plot(
-                    df_subset["model_name"],
-                    df_subset[f"predicted_{metric}"],
-                    label=f"{dataset_name} - Predicted",
-                    marker="x",
+            # Calculate difference between predicted and actual metrics
+            df_grouped["difference"] = (
+                df_grouped[f"predicted_{metric}"] - df_grouped[metric]
+            )
+
+            # Melt the dataframe for seaborn barplot
+            df_melted = df_grouped.melt(
+                id_vars=["model_name"],
+                value_vars=[metric, f"predicted_{metric}"],
+                var_name="Type",
+                value_name="Value",
+            )
+            df_melted["Type"] = df_melted["Type"].apply(
+                lambda x: "Actual" if x == metric else "Predicted"
+            )
+
+            # Create the barplot
+            sns.barplot(
+                data=df_melted,
+                x="model_name",
+                y="Value",
+                hue="Type",
+                ci=None,
+                palette="viridis",
+            )
+
+            # Add difference annotations above the bars
+            for idx, row in df_grouped.iterrows():
+                model = row["model_name"]
+                diff = row["difference"]
+                actual = row[metric]
+                predicted = row[f"predicted_{metric}"]
+
+                # Determine the position for the annotation
+                height = max(actual, predicted) + 0.01 * max(
+                    df_grouped[metric].max(),
+                    df_grouped[f"predicted_{metric}"].max(),
                 )
-                plt.plot(
-                    df_subset["model_name"],
-                    df_subset[metric],
-                    "--",
-                    marker="o",
-                    label=f"{dataset_name} - Actual",
+
+                # Add the text annotation
+                plt.text(
+                    x=idx,
+                    y=height,
+                    s=f"Δ: {diff:.3f}",
+                    ha="center",
+                    va="bottom",
+                    fontsize=10,
+                    color="green" if diff >= 0 else "red",
+                    fontweight="bold",
                 )
 
-            plt.title(f"Predicted vs Actual {metric.capitalize()} on Test Set")
-            plt.xlabel("Model")
-            plt.ylabel(metric.capitalize())
-            plt.xticks(rotation=45)
-            plt.legend(loc="upper right")
-            plt.grid(True)
-
+            # Set plot titles and labels
+            plt.title(
+                f"Actual vs Predicted {metric.capitalize()} on {set_type} Set",
+                fontsize=16,
+            )
+            plt.xlabel("Model", fontsize=14)
+            plt.ylabel(f"{metric.capitalize()}", fontsize=14)
+            plt.xticks(rotation=45, fontsize=12)
+            plt.legend(title="Type", fontsize=12, title_fontsize=13)
             plt.tight_layout()
 
             # Save the plot
-            plot_filename = f"{metric}_comparison_plot.png"
+            plot_filename = (
+                f"{metric}_actual_vs_predicted_plot_{set_type.lower()}.png"
+            )
             plt.savefig(plot_filename)
             plt.close()
 
-            # Log the plot as an artifact
+            # Log the plot as an artifact in MLflow
             mlflow_manager.log_artifact(plot_filename)
 
             logging.info(
-                f"{metric.capitalize()} comparison plots for validation and test sets saved and logged to MLflow."
+                f"Actual vs Predicted plot for {metric.capitalize()} on {set_type} set saved and logged to MLflow."
             )
 
-        # Plot comparisons for validation and test splits
+        # Plot comparisons for validation set
         for metric in ["accuracy", "f1_score", "auc_roc"]:
             plot_metric_comparison(
                 predictions_val_df,
+                metric=metric,
+                set_type="Validation",
+                mlflow_manager=self.mlflow_manager,
+            )
+
+        # Plot comparisons for test set
+        for metric in ["accuracy", "f1_score", "auc_roc"]:
+            plot_metric_comparison(
                 predictions_test_df,
                 metric=metric,
+                set_type="Test",
                 mlflow_manager=self.mlflow_manager,
             )
 
