@@ -25,6 +25,7 @@ import torch.nn as nn  # This import can be removed if not used elsewhere
 import torch.optim as optim  # This import can be removed if not used elsewhere
 from pymfe.mfe import MFE
 from scipy.stats import entropy, kurtosis, skew
+from sklearn.base import clone
 from sklearn.datasets import load_breast_cancer
 from sklearn.decomposition import PCA
 from sklearn.ensemble import (
@@ -62,13 +63,14 @@ from sklearn.svm import SVR
 from sklearn.tree import DecisionTreeClassifier
 from xgboost import XGBClassifier, XGBRegressor
 
+os.makedirs("results", exist_ok=True)
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
     handlers=[
         logging.StreamHandler(sys.stdout),
-        logging.FileHandler("meta_learning_pipeline.log"),
+        logging.FileHandler("results/meta_learning_pipeline.log"),
     ],
 )
 
@@ -465,8 +467,30 @@ class ModelTrainer:
             f"{dataset_name}_{model_name}_n_features", X_train.shape[1]
         )
 
+        # Clone the model to avoid modifying the original
+        model_clone = clone(model)
+
+        # Handle class imbalance
+        if hasattr(model_clone, "class_weight"):
+            model_clone.set_params(class_weight="balanced")
+            logging.info(
+                f"    - Set class_weight='balanced' for {model_name}."
+            )
+        elif isinstance(model_clone, XGBClassifier):
+            # Calculate scale_pos_weight
+            num_neg = np.sum(y_train == 0)
+            num_pos = np.sum(y_train == 1)
+            if num_pos == 0:
+                scale_pos_weight = 1
+            else:
+                scale_pos_weight = num_neg / num_pos
+            model_clone.set_params(scale_pos_weight=scale_pos_weight)
+            logging.info(
+                f"    - Set scale_pos_weight={scale_pos_weight:.2f} for XGBClassifier."
+            )
+
         try:
-            model.fit(X_train, y_train)
+            model_clone.fit(X_train, y_train)
         except Exception as e:
             logging.error(
                 f"Failed to train {model_name} on {dataset_name}: {e}"
@@ -474,11 +498,11 @@ class ModelTrainer:
             return None
 
         # Evaluate on validation set
-        y_pred_val = model.predict(X_val)
-        if hasattr(model, "predict_proba"):
-            y_proba_val = model.predict_proba(X_val)[:, 1]
-        elif hasattr(model, "decision_function"):
-            y_proba_val = model.decision_function(X_val)
+        y_pred_val = model_clone.predict(X_val)
+        if hasattr(model_clone, "predict_proba"):
+            y_proba_val = model_clone.predict_proba(X_val)[:, 1]
+        elif hasattr(model_clone, "decision_function"):
+            y_proba_val = model_clone.decision_function(X_val)
             # Scale decision function to [0,1]
             y_proba_val = (y_proba_val - y_proba_val.min()) / (
                 y_proba_val.max() - y_proba_val.min() + 1e-10
@@ -497,11 +521,11 @@ class ModelTrainer:
             auc_val = np.nan
 
         # Evaluate on test set
-        y_pred_test = model.predict(X_test)
-        if hasattr(model, "predict_proba"):
-            y_proba_test = model.predict_proba(X_test)[:, 1]
-        elif hasattr(model, "decision_function"):
-            y_proba_test = model.decision_function(X_test)
+        y_pred_test = model_clone.predict(X_test)
+        if hasattr(model_clone, "predict_proba"):
+            y_proba_test = model_clone.predict_proba(X_test)[:, 1]
+        elif hasattr(model_clone, "decision_function"):
+            y_proba_test = model_clone.decision_function(X_test)
             y_proba_test = (y_proba_test - y_proba_test.min()) / (
                 y_proba_test.max() - y_proba_test.min() + 1e-10
             )
@@ -547,7 +571,7 @@ class ModelTrainer:
 
         # Save model
         model_artifact_path = f"{dataset_name}_{model_name}_model"
-        mlflow_manager.log_model(model, model_artifact_path)
+        mlflow_manager.log_model(model_clone, model_artifact_path)
 
         performance = {
             "accuracy_val": acc_val,
@@ -679,6 +703,7 @@ class MetaModelManager:
                 "n_estimators": [100, 200, 300, 400, 500],
                 "max_depth": [3, 5, 7, 9, 11, 13, 15, 17],
                 "subsample": [0.6, 0.7, 0.8, 0.9, 1.0],
+                "learning_rate": [0.01, 0.05, 0.1, 0.2],
             }
         elif model_type == "rf":
             models["rf"] = RandomForestRegressor(random_state=42)
@@ -937,11 +962,12 @@ class MetaLearningPipeline:
             performance_df_val,
             on=["dataset_name", "model_name"],
         )
-        meta_dataset_val.to_csv("meta_dataset_val.csv", index=False)
+        os.makedirs("results", exist_ok=True)
+        meta_dataset_val.to_csv("results//meta_dataset_val.csv", index=False)
         logging.info(
-            "\nMeta-dataset for validation set created and saved to 'meta_dataset_val.csv'."
+            "\nMeta-dataset for validation set created and saved to 'results/meta_dataset_val.csv'."
         )
-        self.mlflow_manager.log_artifact("meta_dataset_val.csv")
+        self.mlflow_manager.log_artifact("results//meta_dataset_val.csv")
 
         # Create meta-dataset for test set
         meta_features_df_test = pd.DataFrame(self.meta_features_list_test)
@@ -951,11 +977,11 @@ class MetaLearningPipeline:
             performance_df_test,
             on=["dataset_name", "model_name"],
         )
-        meta_dataset_test.to_csv("meta_dataset_test.csv", index=False)
+        meta_dataset_test.to_csv("results/meta_dataset_test.csv", index=False)
         logging.info(
-            "\nMeta-dataset for test set created and saved to 'meta_dataset_test.csv'."
+            "\nMeta-dataset for test set created and saved to 'results/meta_dataset_test.csv'."
         )
-        self.mlflow_manager.log_artifact("meta_dataset_test.csv")
+        self.mlflow_manager.log_artifact("results/meta_dataset_test.csv")
 
         # Prepare data for meta-models
         # Separate dataset meta-features and model_name
@@ -1170,20 +1196,25 @@ class MetaLearningPipeline:
         )
 
         # Save predictions
+        os.makedirs("results", exist_ok=True)
         predictions_val_df.to_csv(
-            "meta_model_predictions_val.csv", index=False
+            "results/meta_model_predictions_val.csv", index=False
         )
-        self.mlflow_manager.log_artifact("meta_model_predictions_val.csv")
+        self.mlflow_manager.log_artifact(
+            "results/meta_model_predictions_val.csv"
+        )
         logging.info(
-            "\nValidation predictions saved to 'meta_model_predictions_val.csv' and logged to MLflow."
+            "\nValidation predictions saved to 'results/meta_model_predictions_val.csv' and logged to MLflow."
         )
 
         predictions_test_df.to_csv(
-            "meta_model_predictions_test.csv", index=False
+            "results/meta_model_predictions_test.csv", index=False
         )
-        self.mlflow_manager.log_artifact("meta_model_predictions_test.csv")
+        self.mlflow_manager.log_artifact(
+            "results/meta_model_predictions_test.csv"
+        )
         logging.info(
-            "\nTest predictions saved to 'meta_model_predictions_test.csv' and logged to MLflow."
+            "\nTest predictions saved to 'results/meta_model_predictions_test.csv' and logged to MLflow."
         )
 
         # Plot and log comparisons
