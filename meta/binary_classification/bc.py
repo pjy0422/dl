@@ -740,8 +740,8 @@ class MetaModelManager:
                 scoring="neg_mean_absolute_error",
                 cv=5,
                 n_jobs=-1,
-                verbose=1,
-                n_iter=500,  # Number of parameter settings that are sampled
+                verbose=0,
+                n_iter=50,  # Adjusted number of iterations for efficiency
                 random_state=41,  # For reproducibility
             )
             randomized_search.fit(X_train, y_train)
@@ -1283,111 +1283,109 @@ class MetaLearningPipeline:
     ):
         import seaborn as sns  # Import seaborn for better visualization
 
-        def plot_metric_comparison(df, metric, set_type, mlflow_manager):
+        # Combine validation and test data
+        predictions_val_df["split"] = "Validation"
+        predictions_test_df["split"] = "Test"
+        combined_df = pd.concat(
+            [predictions_val_df, predictions_test_df], ignore_index=True
+        )
 
-            plt.figure(figsize=(18, 9))
-            sns.set(style="whitegrid")
+        # Metrics to compare
+        metrics = ["accuracy", "f1_score", "auc_roc"]
 
-            # Aggregate data: calculate mean actual and predicted metrics per model
-            df_grouped = (
-                df.groupby("model_name")
-                .agg({metric: "mean", f"predicted_{metric}": "mean"})
-                .reset_index()
-            )
+        # Iterate through each dataset
+        for dataset in combined_df["dataset_name"].unique():
+            dataset_df = combined_df[combined_df["dataset_name"] == dataset]
 
-            # Calculate difference between predicted and actual metrics
-            df_grouped["difference"] = (
-                df_grouped[f"predicted_{metric}"] - df_grouped[metric]
-            )
+            # Iterate through each split
+            for split in ["Validation", "Test"]:
+                split_df = dataset_df[dataset_df["split"] == split]
 
-            # Melt the dataframe for seaborn barplot
-            df_melted = df_grouped.melt(
-                id_vars=["model_name"],
-                value_vars=[metric, f"predicted_{metric}"],
-                var_name="Type",
-                value_name="Value",
-            )
-            df_melted["Type"] = df_melted["Type"].apply(
-                lambda x: "Actual" if x == metric else "Predicted"
-            )
+                # Iterate through each metric
+                for metric in metrics:
+                    # Prepare data
+                    actual_metric = metric
+                    predicted_metric = f"predicted_{metric}"
 
-            # Create the barplot
-            sns.barplot(
-                data=df_melted,
-                x="model_name",
-                y="Value",
-                hue="Type",
-                ci=None,
-                palette="viridis",
-            )
+                    # Aggregate data: calculate mean actual and predicted metrics per model
+                    merged = (
+                        split_df.groupby("model_name")
+                        .agg({actual_metric: "mean", predicted_metric: "mean"})
+                        .reset_index()
+                    )
 
-            # Add difference annotations above the bars
-            for idx, row in df_grouped.iterrows():
-                model = row["model_name"]
-                diff = row["difference"]
-                actual = row[metric]
-                predicted = row[f"predicted_{metric}"]
+                    # Reshape the data for seaborn
+                    reshaped = merged.melt(
+                        id_vars="model_name",
+                        value_vars=[actual_metric, predicted_metric],
+                        var_name="Metric_Type",
+                        value_name="Value",
+                    )
 
-                # Determine the position for the annotation
-                height = max(actual, predicted) + 0.01 * max(
-                    df_grouped[metric].max(),
-                    df_grouped[f"predicted_{metric}"].max(),
-                )
+                    # Rename metric types for clarity
+                    reshaped["Metric_Type"] = reshaped["Metric_Type"].map(
+                        {
+                            actual_metric: "Actual",
+                            predicted_metric: "Predicted",
+                        }
+                    )
 
-                # Add the text annotation
-                plt.text(
-                    x=idx,
-                    y=height,
-                    s=f"Δ: {diff:.3f}",
-                    ha="center",
-                    va="bottom",
-                    fontsize=10,
-                    color="green" if diff >= 0 else "red",
-                    fontweight="bold",
-                )
+                    # Set up the plot
+                    plt.figure(figsize=(12, 8))
+                    sns.set(style="whitegrid")
 
-            # Set plot titles and labels
-            plt.title(
-                f"Actual vs Predicted {metric.capitalize()} on {set_type} Set",
-                fontsize=16,
-            )
-            plt.xlabel("Model", fontsize=14)
-            plt.ylabel(f"{metric.capitalize()}", fontsize=14)
-            plt.xticks(rotation=45, fontsize=12)
-            plt.legend(title="Type", fontsize=12, title_fontsize=13)
-            plt.tight_layout()
+                    # Create the barplot with hue for Actual and Predicted
+                    sns.barplot(
+                        x="model_name",
+                        y="Value",
+                        hue="Metric_Type",
+                        data=reshaped,
+                        palette={"Actual": "skyblue", "Predicted": "salmon"},
+                        edgecolor="white",
+                        linewidth=1,
+                    )
 
-            # Save the plot
-            plot_filename = (
-                f"{metric}_actual_vs_predicted_plot_{set_type.lower()}.png"
-            )
-            plt.savefig(plot_filename)
-            plt.close()
+                    # Add difference annotations
+                    for idx, row in merged.iterrows():
+                        diff = row[predicted_metric] - row[actual_metric]
+                        color = "green" if diff >= 0 else "red"
+                        plt.text(
+                            idx,
+                            max(row[actual_metric], row[predicted_metric])
+                            + 0.01
+                            * max(row[actual_metric], row[predicted_metric]),
+                            f"Δ: {diff:.2f}",
+                            ha="center",
+                            va="bottom",
+                            fontsize=10,
+                            color=color,
+                            fontweight="bold",
+                        )
 
-            # Log the plot as an artifact in MLflow
-            mlflow_manager.log_artifact(plot_filename)
+                    # Customize the plot
+                    plt.title(
+                        f"Actual vs Predicted {metric.capitalize()} for {dataset} ({split} Set)",
+                        fontsize=16,
+                    )
+                    plt.xlabel("Model", fontsize=14)
+                    plt.ylabel(f"{metric.capitalize()}", fontsize=14)
+                    plt.xticks(rotation=45, ha="right", fontsize=12)
+                    plt.legend(title="Metric Type", fontsize=12)
+                    plt.tight_layout()
+                    os.makedirs("figures", exist_ok=True)
+                    # Save the plot
+                    plot_filename = (
+                        f"figures/{dataset}_{split}_{metric}_comparison.png"
+                    )
+                    plt.savefig(plot_filename)
+                    plt.close()
 
-            logging.info(
-                f"Actual vs Predicted plot for {metric.capitalize()} on {set_type} set saved and logged to MLflow."
-            )
+                    # Log the plot as an artifact in MLflow
+                    self.mlflow_manager.log_artifact(plot_filename)
 
-        # Plot comparisons for validation set
-        for metric in ["accuracy", "f1_score", "auc_roc"]:
-            plot_metric_comparison(
-                predictions_val_df,
-                metric=metric,
-                set_type="Validation",
-                mlflow_manager=self.mlflow_manager,
-            )
-
-        # Plot comparisons for test set
-        for metric in ["accuracy", "f1_score", "auc_roc"]:
-            plot_metric_comparison(
-                predictions_test_df,
-                metric=metric,
-                set_type="Test",
-                mlflow_manager=self.mlflow_manager,
-            )
+                    logging.info(
+                        f"Actual vs Predicted {metric.capitalize()} comparison plot for {dataset} ({split} set) saved and logged to MLflow."
+                    )
 
 
 if __name__ == "__main__":
