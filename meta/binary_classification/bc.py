@@ -20,6 +20,7 @@ import mlflow.sklearn
 import mlflow.xgboost
 import numpy as np
 import pandas as pd
+import seaborn as sns
 import torch  # This import can be removed if not used elsewhere
 import torch.nn as nn  # This import can be removed if not used elsewhere
 import torch.optim as optim  # This import can be removed if not used elsewhere
@@ -29,10 +30,10 @@ from sklearn.base import clone
 from sklearn.datasets import load_breast_cancer
 from sklearn.decomposition import PCA
 from sklearn.ensemble import (
+    BaggingClassifier,
     RandomForestClassifier,
-    RandomForestRegressor,
-    StackingRegressor,
-    VotingRegressor,
+    StackingClassifier,
+    VotingClassifier,
 )
 from sklearn.feature_selection import (
     SelectKBest,
@@ -838,20 +839,82 @@ class MetaLearningPipeline:
         self.dataset_loader.load_all_datasets()
 
         # Define Models
+
         self.models = {
             "Logistic Regression": LogisticRegression(
-                max_iter=200, solver="lbfgs", n_jobs=-1
+                penalty="l2", C=1.0, max_iter=200, solver="lbfgs", n_jobs=-1
             ),
             "Random Forest": RandomForestClassifier(
-                n_estimators=100, random_state=42, n_jobs=-1
+                n_estimators=100,
+                max_depth=None,
+                min_samples_split=2,
+                min_samples_leaf=1,
+                bootstrap=True,
+                random_state=42,
+                n_jobs=-1,
             ),
-            "Decision Tree": DecisionTreeClassifier(random_state=42),
+            "Decision Tree": DecisionTreeClassifier(
+                criterion="gini",
+                splitter="best",
+                max_depth=None,
+                min_samples_split=2,
+                min_samples_leaf=1,
+                random_state=42,
+            ),
             "K-Nearest Neighbors": KNeighborsClassifier(
-                n_neighbors=5, n_jobs=-1
+                n_neighbors=5, algorithm="auto", leaf_size=30, p=2, n_jobs=-1
             ),
-            "Naive Bayes": GaussianNB(),
+            "Bagging Classifier": BaggingClassifier(
+                estimator=DecisionTreeClassifier(),
+                n_estimators=10,
+                max_samples=1.0,
+                max_features=1.0,
+                bootstrap=True,
+                random_state=42,
+                n_jobs=-1,
+            ),
+            "Stacking Classifier": StackingClassifier(
+                estimators=[
+                    (
+                        "rf",
+                        RandomForestClassifier(
+                            n_estimators=10, random_state=42
+                        ),
+                    ),
+                    ("knn", KNeighborsClassifier(n_neighbors=3, n_jobs=-1)),
+                ],
+                final_estimator=LogisticRegression(),
+                cv=5,
+                n_jobs=-1,
+            ),
             "XGBoost": XGBClassifier(
-                use_label_encoder=False, eval_metric="logloss", random_state=42
+                use_label_encoder=False,
+                eval_metric="logloss",
+                learning_rate=0.1,
+                n_estimators=100,
+                max_depth=6,
+                subsample=0.8,
+                colsample_bytree=0.8,
+                random_state=42,
+            ),
+            "Voting Classifier": VotingClassifier(
+                estimators=[  # Define base models for voting
+                    (
+                        "lr",
+                        LogisticRegression(
+                            max_iter=200, solver="lbfgs", n_jobs=-1
+                        ),
+                    ),
+                    (
+                        "rf",
+                        RandomForestClassifier(
+                            n_estimators=100, random_state=42, n_jobs=-1
+                        ),
+                    ),
+                    ("knn", KNeighborsClassifier(n_neighbors=5, n_jobs=-1)),
+                ],
+                voting="soft",  # Set to "hard" for majority voting or "soft" for probability-based voting
+                n_jobs=-1,  # Utilize all available cores
             ),
         }
 
@@ -963,11 +1026,11 @@ class MetaLearningPipeline:
             on=["dataset_name", "model_name"],
         )
         os.makedirs("results", exist_ok=True)
-        meta_dataset_val.to_csv("results//meta_dataset_val.csv", index=False)
+        meta_dataset_val.to_csv("results/meta_dataset_val.csv", index=False)
         logging.info(
             "\nMeta-dataset for validation set created and saved to 'results/meta_dataset_val.csv'."
         )
-        self.mlflow_manager.log_artifact("results//meta_dataset_val.csv")
+        self.mlflow_manager.log_artifact("results/meta_dataset_val.csv")
 
         # Create meta-dataset for test set
         meta_features_df_test = pd.DataFrame(self.meta_features_list_test)
@@ -1306,14 +1369,40 @@ class MetaLearningPipeline:
             "mean_auc_abs_error_test_final", mean_auc_abs_error_test_final
         )
 
+        # Save mean absolute errors to a CSV file
+        mean_errors = {
+            "metric": [
+                "accuracy",
+                "f1_score",
+                "auc_roc",
+            ],
+            "mean_abs_error_val": [
+                mean_acc_abs_error_val_final,
+                mean_f1_abs_error_val_final,
+                mean_auc_abs_error_val_final,
+            ],
+            "mean_abs_error_test": [
+                mean_acc_abs_error_test_final,
+                mean_f1_abs_error_test_final,
+                mean_auc_abs_error_test_final,
+            ],
+        }
+
+        mean_errors_df = pd.DataFrame(mean_errors)
+        mean_errors_df.to_csv(
+            "results/meta_model_mean_errors.csv", index=False
+        )
+        logging.info(
+            "\nMean absolute errors saved to 'results/meta_model_mean_errors.csv'."
+        )
+        self.mlflow_manager.log_artifact("results/meta_model_mean_errors.csv")
+
         # End MLflow run
         self.mlflow_manager.end_run()
 
     def plot_and_log_comparisons(
         self, predictions_val_df, predictions_test_df
     ):
-        import seaborn as sns  # Import seaborn for better visualization
-
         # Combine validation and test data
         predictions_val_df["split"] = "Validation"
         predictions_test_df["split"] = "Test"
@@ -1420,6 +1509,17 @@ class MetaLearningPipeline:
 
 
 if __name__ == "__main__":
+    # Configure logging
+    os.makedirs("results", exist_ok=True)
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(message)s",
+        handlers=[
+            logging.StreamHandler(sys.stdout),
+            logging.FileHandler("results/meta_learning_pipeline.log"),
+        ],
+    )
+
     try:
         pipeline = MetaLearningPipeline()
         pipeline.start()
