@@ -2,11 +2,7 @@
 
 import logging
 
-import catboost as cb
-import lightgbm as lgb
-import numpy as np
 from sklearn.ensemble import RandomForestRegressor
-from sklearn.linear_model import LinearRegression
 from sklearn.metrics import mean_absolute_error
 from sklearn.model_selection import RandomizedSearchCV, cross_val_score
 from sklearn.svm import SVR
@@ -54,28 +50,7 @@ class MetaModelManager:
                 "min_samples_leaf": [1, 2, 4],
                 "bootstrap": [True, False],
             }
-        elif model_type == "lgbm":
-            models["lgbm"] = lgb.LGBMRegressor(random_state=42)
-            param_distributions["lgbm"] = {
-                "n_estimators": [100, 200, 300, 400, 500],
-                "num_leaves": [31, 50, 100, 150],
-                "learning_rate": [0.01, 0.05, 0.1, 0.2],
-                "subsample": [0.6, 0.7, 0.8, 0.9, 1.0],
-                "colsample_bytree": [0.6, 0.7, 0.8, 0.9, 1.0],
-                "reg_alpha": [0, 0.01, 0.1, 1],
-                "reg_lambda": [1, 1.5, 2, 2.5, 3],
-                "min_split_gain": [0, 0.1, 0.2, 0.3],
-            }
-        elif model_type == "cb":
-            models["cb"] = cb.CatBoostRegressor(random_state=42, silent=True)
-            param_distributions["cb"] = {
-                "iterations": [100, 200, 300, 400, 500],
-                "depth": [4, 6, 8, 10, 12],
-                "learning_rate": [0.01, 0.05, 0.1, 0.2],
-                "l2_leaf_reg": [1, 3, 5, 7, 9],
-                "bagging_temperature": [0, 0.1, 0.2, 0.3, 0.4],
-                "border_count": [32, 64, 128, 256],
-            }
+
         elif model_type == "svr":
             models["svr"] = SVR()
             param_distributions["svr"] = {

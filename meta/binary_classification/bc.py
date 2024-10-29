@@ -10,20 +10,14 @@ from datetime import datetime
 import matplotlib
 
 matplotlib.use("Agg")
-import catboost as cb  # This import can be removed if not used elsewhere
-import lightgbm as lgb  # This import can be removed if not used elsewhere
 import matplotlib.pyplot as plt
 import mlflow
-import mlflow.catboost
 import mlflow.lightgbm
 import mlflow.sklearn
 import mlflow.xgboost
 import numpy as np
 import pandas as pd
 import seaborn as sns
-import torch  # This import can be removed if not used elsewhere
-import torch.nn as nn  # This import can be removed if not used elsewhere
-import torch.optim as optim  # This import can be removed if not used elsewhere
 from pymfe.mfe import MFE
 from scipy.stats import entropy, kurtosis, skew
 from sklearn.base import clone
@@ -35,13 +29,9 @@ from sklearn.ensemble import (
     StackingClassifier,
     VotingClassifier,
 )
-from sklearn.feature_selection import (
-    SelectKBest,
-    mutual_info_classif,
-    mutual_info_regression,
-)
+from sklearn.feature_selection import mutual_info_classif
 from sklearn.impute import SimpleImputer
-from sklearn.linear_model import LinearRegression, LogisticRegression
+from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     accuracy_score,
     f1_score,
@@ -51,9 +41,7 @@ from sklearn.metrics import (
     roc_auc_score,
 )
 from sklearn.model_selection import (  # Imported for RandomizedSearch
-    GridSearchCV,
     RandomizedSearchCV,
-    StratifiedKFold,
     cross_val_score,
     train_test_split,
 )
@@ -168,22 +156,6 @@ class MLflowManager:
                 ),
             ):
                 mlflow.xgboost.log_model(model, artifact_path)
-            elif isinstance(
-                model,
-                (
-                    lgb.LGBMClassifier,
-                    lgb.LGBMRegressor,
-                ),
-            ):
-                mlflow.lightgbm.log_model(model, artifact_path)
-            elif isinstance(
-                model,
-                (
-                    cb.CatBoostClassifier,
-                    cb.CatBoostRegressor,
-                ),
-            ):
-                mlflow.catboost.log_model(model, artifact_path)
             else:
                 mlflow.sklearn.log_model(model, artifact_path)
             logging.info(f"Logged model: {artifact_path}")
@@ -727,16 +699,6 @@ class MetaModelManager:
                 "reg_alpha": [0, 0.01, 0.1, 1],
                 "reg_lambda": [1, 1.5, 2, 2.5, 3],
                 "min_split_gain": [0, 0.1, 0.2, 0.3],
-            }
-        elif model_type == "cb":
-            models["cb"] = cb.CatBoostRegressor(random_state=42, silent=True)
-            param_distributions["cb"] = {
-                "iterations": [100, 200, 300, 400, 500],
-                "depth": [4, 6, 8, 10, 12],
-                "learning_rate": [0.01, 0.05, 0.1, 0.2],
-                "l2_leaf_reg": [1, 3, 5, 7, 9],
-                "bagging_temperature": [0, 0.1, 0.2, 0.3, 0.4],
-                "border_count": [32, 64, 128, 256],
             }
         elif model_type == "svr":
             models["svr"] = SVR()
