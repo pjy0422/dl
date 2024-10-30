@@ -1,11 +1,11 @@
-# meta_learning_pipeline/mlflow_manager.py
+# mlflow_manager.py
 
 import logging
 import os
-import socket
 import subprocess
 import sys
 import time
+from datetime import datetime
 
 import mlflow
 import mlflow.sklearn
@@ -18,7 +18,7 @@ class MLflowManager:
         self,
         host="127.0.0.1",
         port=3060,
-        experiment_name="Meta-Model-BinaryClass",
+        experiment_name="Meta-Model-MultiClass",
         tracking_uri=None,
     ):
         self.host = host
@@ -58,6 +58,8 @@ class MLflowManager:
             sys.exit(1)
 
     def is_mlflow_running(self):
+        import socket
+
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
             result = sock.connect_ex((self.host, self.port))
             return result == 0

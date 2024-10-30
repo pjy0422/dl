@@ -1,37 +1,40 @@
-# meta_learning_pipeline/pipeline.py
+# pipeline.py
 
 import logging
 import os
 import sys
 from datetime import datetime
-import pandas as pd
-import numpy as np
-import joblib
-from sklearn.linear_model import LinearRegression
-from sklearn.ensemble import (
-    RandomForestRegressor,
-    AdaBoostRegressor,
-    BaggingRegressor,
-    StackingRegressor,
-    VotingRegressor,
-)
-import mlflow
+
 import matplotlib
-import mlflow.sklearn
-import mlflow.xgboost
-from sklearn.tree import DecisionTreeRegressor
-from sklearn.svm import SVR
-from sklearn.neighbors import KNeighborsRegressor
-from xgboost import XGBRegressor
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import seaborn as sns
+from sklearn.preprocessing import StandardScaler
+from sklearn.ensemble import (
+    AdaBoostClassifier,
+    BaggingClassifier,
+    RandomForestClassifier,
+    StackingClassifier,
+    VotingClassifier,
+)
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.neighbors import KNeighborsClassifier
+
 from dataset_loader import DatasetLoader
+from mlflow_manager import MLflowManager
 from model_trainer import ModelTrainer
 from meta_feature_extractor import MetaFeatureExtractor
 from meta_model_manager import MetaModelManager
-from mlflow_manager import MLflowManager
-from sklearn.preprocessing import StandardScaler
+import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
+# Set Matplotlib to use the 'Agg' backend before importing pyplot
 matplotlib.use("Agg")
+
+
 class MetaLearningPipeline:
     def __init__(self):
         # Initialize MLflow Manager
@@ -43,83 +46,93 @@ class MetaLearningPipeline:
         self.dataset_loader.load_all_datasets()
 
         # Define Models
+
         self.models = {
-            "Linear Regression": LinearRegression(),
-            "Random Forest Regressor": RandomForestRegressor(
+            "Logistic Regression": LogisticRegression(
+                penalty="l2",
+                C=1.0,
+                max_iter=100,
+                solver="saga",
+                multi_class="auto",
+                n_jobs=4,
+            ),
+            "Random Forest": RandomForestClassifier(
                 n_estimators=100,
                 max_depth=None,
                 min_samples_split=2,
                 min_samples_leaf=1,
                 bootstrap=True,
                 random_state=42,
-                n_jobs=-1,
+                n_jobs=4,
             ),
-            "Decision Tree Regressor": DecisionTreeRegressor(
-                criterion="absolute_error",
+            "Decision Tree": DecisionTreeClassifier(
+                criterion="gini",
                 splitter="best",
                 max_depth=None,
                 min_samples_split=2,
                 min_samples_leaf=1,
                 random_state=42,
             ),
-            "SVR": SVR(),
-            "K-Nearest Neighbors Regressor": KNeighborsRegressor(
-                n_neighbors=5, algorithm="auto", leaf_size=30, p=2, n_jobs=-1
+            "K-Nearest Neighbors": KNeighborsClassifier(
+                n_neighbors=5, algorithm="auto", leaf_size=30, p=2, n_jobs=4
             ),
-            "XGBoost Regressor": XGBRegressor(
-                objective="reg:squarederror",
-                learning_rate=0.1,
-                n_estimators=100,
-                max_depth=6,
-                subsample=0.8,
-                colsample_bytree=0.8,
-                random_state=42,
-                n_jobs=-1,
+            "AdaBoost": AdaBoostClassifier(
+                n_estimators=50, learning_rate=1.0, random_state=42
             ),
-            "AdaBoost Regressor": AdaBoostRegressor(
-                n_estimators=50,
-                learning_rate=1.0,
-                loss="linear",
-                random_state=42,
-            ),
-            "Bagging Regressor": BaggingRegressor(
-                estimator=DecisionTreeRegressor(),
+            "Bagging Classifier": BaggingClassifier(
+                estimator=DecisionTreeClassifier(),
                 n_estimators=10,
                 max_samples=1.0,
                 max_features=1.0,
                 bootstrap=True,
                 random_state=42,
-                n_jobs=-1,
+                n_jobs=4,
             ),
-            "Stacking Regressor": StackingRegressor(
+            "Stacking Classifier": StackingClassifier(
                 estimators=[
                     (
                         "rf",
-                        RandomForestRegressor(
-                            n_estimators=10, random_state=42, n_jobs=-1
+                        RandomForestClassifier(
+                            n_estimators=10, random_state=42
                         ),
                     ),
-                    ("knn", KNeighborsRegressor(n_neighbors=3, n_jobs=-1)),
+                    ("knn", KNeighborsClassifier(n_neighbors=3, n_jobs=4)),
                 ],
-                final_estimator=LinearRegression(),
+                final_estimator=LogisticRegression(),
                 cv=5,
-                n_jobs=-1,
+                n_jobs=4,
             ),
-            "Voting Regressor": VotingRegressor(
+            # "XGBoost": XGBClassifier(
+            #     use_label_encoder=False,
+            #     eval_metric="mlogloss",
+            #     learning_rate=0.1,
+            #     n_estimators=100,
+            #     max_depth=6,
+            #     subsample=0.8,
+            #     colsample_bytree=0.8,
+            #     random_state=42,
+            # ),
+            "Voting Classifier": VotingClassifier(
                 estimators=[  # Define base models for voting
                     (
                         "lr",
-                        LinearRegression(),
+                        LogisticRegression(
+                            max_iter=200,
+                            solver="lbfgs",
+                            multi_class="multinomial",
+                            n_jobs=4,
+                        ),
                     ),
                     (
                         "rf",
-                        RandomForestRegressor(
-                            n_estimators=100, random_state=42, n_jobs=-1
+                        RandomForestClassifier(
+                            n_estimators=100, random_state=42, n_jobs=4
                         ),
                     ),
-                    ("knn", KNeighborsRegressor(n_neighbors=5, n_jobs=-1)),
+                    ("knn", KNeighborsClassifier(n_neighbors=5, n_jobs=4)),
                 ],
-                n_jobs=-1,  # Utilize all available cores
+                voting="soft",  # Set to "hard" for majority voting or "soft" for probability-based voting
+                n_jobs=4,  # Utilize all available cores
             ),
         }
 
@@ -196,10 +209,11 @@ class MetaLearningPipeline:
                 performance_entry_val = {
                     "dataset_name": dataset_name,
                     "model_name": model_name,
-                    "mae_val": performance["mae_val"],
-                    "mse_val": performance["mse_val"],
-                    "rmse_val": performance["rmse_val"],
-                    "r2_val": performance["r2_val"],
+                    "accuracy": performance["accuracy_val"],
+                    "precision": performance["precision_val"],
+                    "recall": performance["recall_val"],
+                    "f1_score": performance["f1_score_val"],
+                    "auc_roc": performance["auc_roc_val"],
                 }
                 self.performance_list_val.append(performance_entry_val)
 
@@ -207,10 +221,11 @@ class MetaLearningPipeline:
                 performance_entry_test = {
                     "dataset_name": dataset_name,
                     "model_name": model_name,
-                    "mae_test": performance["mae_test"],
-                    "mse_test": performance["mse_test"],
-                    "rmse_test": performance["rmse_test"],
-                    "r2_test": performance["r2_test"],
+                    "accuracy": performance["accuracy_test"],
+                    "precision": performance["precision_test"],
+                    "recall": performance["recall_test"],
+                    "f1_score": performance["f1_score_test"],
+                    "auc_roc": performance["auc_roc_test"],
                 }
                 self.performance_list_test.append(performance_entry_test)
 
@@ -256,10 +271,26 @@ class MetaLearningPipeline:
         # Prepare data for meta-models
         # Separate dataset meta-features and model_name
         X_meta_val = meta_dataset_val.drop(
-            ["dataset_name", "mae_val", "mse_val", "rmse_val", "r2_val"], axis=1
+            [
+                "dataset_name",
+                "accuracy",
+                "precision",
+                "recall",
+                "f1_score",
+                "auc_roc",
+            ],
+            axis=1,
         )
         X_meta_test = meta_dataset_test.drop(
-            ["dataset_name", "mae_test", "mse_test", "rmse_test", "r2_test"], axis=1
+            [
+                "dataset_name",
+                "accuracy",
+                "precision",
+                "recall",
+                "f1_score",
+                "auc_roc",
+            ],
+            axis=1,
         )
 
         # One-Hot Encode model names
@@ -305,192 +336,194 @@ class MetaLearningPipeline:
         X_meta_test_processed = np.array(X_meta_test_processed)
 
         # Targets for meta-model training and testing (using validation split)
-        y_meta_mae_val = meta_dataset_val["mae_val"].values
-        y_meta_mse_val = meta_dataset_val["mse_val"].values
-        y_meta_rmse_val = meta_dataset_val["rmse_val"].values
-        y_meta_r2_val = meta_dataset_val["r2_val"].values
+        y_meta_acc_val = meta_dataset_val["accuracy"].values
+        y_meta_precision_val = meta_dataset_val["precision"].values
+        y_meta_recall_val = meta_dataset_val["recall"].values
+        y_meta_f1_val = meta_dataset_val["f1_score"].values
+        y_meta_auc_val = (
+            meta_dataset_val["auc_roc"]
+            .fillna(meta_dataset_val["auc_roc"].mean())
+            .values
+        )
 
         # Targets for meta-model testing (using test split)
-        y_meta_mae_test = meta_dataset_test["mae_test"].values
-        y_meta_mse_test = meta_dataset_test["mse_test"].values
-        y_meta_rmse_test = meta_dataset_test["rmse_test"].values
-        y_meta_r2_test = meta_dataset_test["r2_test"].values
+        y_meta_acc_test = meta_dataset_test["accuracy"].values
+        y_meta_precision_test = meta_dataset_test["precision"].values
+        y_meta_recall_test = meta_dataset_test["recall"].values
+        y_meta_f1_test = meta_dataset_test["f1_score"].values
+        y_meta_auc_test = (
+            meta_dataset_test["auc_roc"]
+            .fillna(meta_dataset_test["auc_roc"].mean())
+            .values
+        )
 
-        # Normalize performance metrics
-        logging.info("\nNormalizing performance metrics...")
-        scaler_mae = StandardScaler()
-        scaler_mse = StandardScaler()
-        scaler_rmse = StandardScaler()
-        scaler_r2 = StandardScaler()
-
-        # Fit scalers on validation set and transform both validation and test sets
-        y_meta_mae_val_scaled = scaler_mae.fit_transform(y_meta_mae_val.reshape(-1, 1)).ravel()
-        y_meta_mse_val_scaled = scaler_mse.fit_transform(y_meta_mse_val.reshape(-1, 1)).ravel()
-        y_meta_rmse_val_scaled = scaler_rmse.fit_transform(y_meta_rmse_val.reshape(-1, 1)).ravel()
-        y_meta_r2_val_scaled = scaler_r2.fit_transform(y_meta_r2_val.reshape(-1, 1)).ravel()
-
-        y_meta_mae_test_scaled = scaler_mae.transform(y_meta_mae_test.reshape(-1, 1)).ravel()
-        y_meta_mse_test_scaled = scaler_mse.transform(y_meta_mse_test.reshape(-1, 1)).ravel()
-        y_meta_rmse_test_scaled = scaler_rmse.transform(y_meta_rmse_test.reshape(-1, 1)).ravel()
-        y_meta_r2_test_scaled = scaler_r2.transform(y_meta_r2_test.reshape(-1, 1)).ravel()
-
-        # Save scalers
-        logging.info("Saving and logging scalers...")
-        joblib.dump(scaler_mae, "results/scaler_mae.pkl")
-        joblib.dump(scaler_mse, "results/scaler_mse.pkl")
-        joblib.dump(scaler_rmse, "results/scaler_rmse.pkl")
-        joblib.dump(scaler_r2, "results/scaler_r2.pkl")
-
-        self.mlflow_manager.log_artifact("results/scaler_mae.pkl")
-        self.mlflow_manager.log_artifact("results/scaler_mse.pkl")
-        self.mlflow_manager.log_artifact("results/scaler_rmse.pkl")
-        self.mlflow_manager.log_artifact("results/scaler_r2.pkl")
-        logging.info("Scalers saved and logged successfully.")
-
-        # Train and evaluate meta-models on normalized validation metrics
+        # Train and evaluate meta-models on validation metrics
         logging.info(
-            "\nTraining and evaluating meta-models for normalized validation metrics."
+            "\nTraining and evaluating meta-models for validation metrics."
         )
         meta_model_manager = self.meta_model_manager
 
-        # MAE Meta-Model
-        xgb_model_mae_final, error_train_mae, error_test_mae = (
+        # Accuracy Meta-Model
+        xgb_model_acc_final, error_train_acc, error_test_acc = (
             meta_model_manager.train_and_evaluate_meta_model(
                 X_meta_val_processed,
-                y_meta_mae_val_scaled,
+                y_meta_acc_val,
                 X_meta_test_processed,
-                y_meta_mae_test_scaled,
+                y_meta_acc_test,
                 model_type="xgb",
-                metric_name="MAE",
+                metric_name="Accuracy",
                 mlflow_manager=self.mlflow_manager,
             )
         )
 
-        # MSE Meta-Model
-        xgb_model_mse_final, error_train_mse, error_test_mse = (
+        # Precision Meta-Model
+        (
+            xgb_model_precision_final,
+            error_train_precision,
+            error_test_precision,
+        ) = meta_model_manager.train_and_evaluate_meta_model(
+            X_meta_val_processed,
+            y_meta_precision_val,
+            X_meta_test_processed,
+            y_meta_precision_test,
+            model_type="xgb",
+            metric_name="Precision",
+            mlflow_manager=self.mlflow_manager,
+        )
+
+        # Recall Meta-Model
+        xgb_model_recall_final, error_train_recall, error_test_recall = (
             meta_model_manager.train_and_evaluate_meta_model(
                 X_meta_val_processed,
-                y_meta_mse_val_scaled,
+                y_meta_recall_val,
                 X_meta_test_processed,
-                y_meta_mse_test_scaled,
+                y_meta_recall_test,
                 model_type="xgb",
-                metric_name="MSE",
+                metric_name="Recall",
                 mlflow_manager=self.mlflow_manager,
             )
         )
 
-        # RMSE Meta-Model
-        xgb_model_rmse_final, error_train_rmse, error_test_rmse = (
+        # F1-Score Meta-Model
+        xgb_model_f1_final, error_train_f1, error_test_f1 = (
             meta_model_manager.train_and_evaluate_meta_model(
                 X_meta_val_processed,
-                y_meta_rmse_val_scaled,
+                y_meta_f1_val,
                 X_meta_test_processed,
-                y_meta_rmse_test_scaled,
+                y_meta_f1_test,
                 model_type="xgb",
-                metric_name="RMSE",
+                metric_name="F1_Score",
                 mlflow_manager=self.mlflow_manager,
             )
         )
 
-        # R2 Meta-Model
-        xgb_model_r2_final, error_train_r2, error_test_r2 = (
+        # AUC-ROC Meta-Model
+        xgb_model_auc_final, error_train_auc, error_test_auc = (
             meta_model_manager.train_and_evaluate_meta_model(
                 X_meta_val_processed,
-                y_meta_r2_val_scaled,
+                y_meta_auc_val,
                 X_meta_test_processed,
-                y_meta_r2_test_scaled,
+                y_meta_auc_test,
                 model_type="xgb",
-                metric_name="R2",
+                metric_name="AUC_ROC",
                 mlflow_manager=self.mlflow_manager,
             )
         )
 
         # Save the final meta-models
-        logging.info("Saving and logging final meta-models...")
-        if xgb_model_mae_final:
+        if xgb_model_acc_final:
             self.mlflow_manager.log_model(
-                xgb_model_mae_final, "final_meta_model_mae_xgb"
+                xgb_model_acc_final, "final_meta_model_accuracy_xgb"
             )
-        if xgb_model_mse_final:
+        if xgb_model_precision_final:
             self.mlflow_manager.log_model(
-                xgb_model_mse_final, "final_meta_model_mse_xgb"
+                xgb_model_precision_final, "final_meta_model_precision_xgb"
             )
-        if xgb_model_rmse_final:
+        if xgb_model_recall_final:
             self.mlflow_manager.log_model(
-                xgb_model_rmse_final, "final_meta_model_rmse_xgb"
+                xgb_model_recall_final, "final_meta_model_recall_xgb"
             )
-        if xgb_model_r2_final:
+        if xgb_model_f1_final:
             self.mlflow_manager.log_model(
-                xgb_model_r2_final, "final_meta_model_r2_xgb"
+                xgb_model_f1_final, "final_meta_model_f1_score_xgb"
             )
-        logging.info("Final meta-models logged to MLflow successfully.")
+        if xgb_model_auc_final:
+            self.mlflow_manager.log_model(
+                xgb_model_auc_final, "final_meta_model_auc_roc_xgb"
+            )
+        logging.info("Meta-models for validation metrics logged to MLflow.")
 
         # Predicting on validation and test sets
         logging.info(
             "\nPredicting validation and test metrics using meta-models."
         )
-        if xgb_model_mae_final:
-            predicted_mae_val_scaled = xgb_model_mae_final.predict(
+        if xgb_model_acc_final:
+            predicted_acc_val = xgb_model_acc_final.predict(
                 X_meta_val_processed
             )
-            predicted_mae_val = scaler_mae.inverse_transform(predicted_mae_val_scaled.reshape(-1, 1)).ravel()
-            predicted_mae_test_scaled = xgb_model_mae_final.predict(
+            predicted_acc_test = xgb_model_acc_final.predict(
                 X_meta_test_processed
             )
-            predicted_mae_test = scaler_mae.inverse_transform(predicted_mae_test_scaled.reshape(-1, 1)).ravel()
         else:
-            predicted_mae_val = np.zeros_like(y_meta_mae_val)
-            predicted_mae_test = np.zeros_like(y_meta_mae_test)
+            predicted_acc_val = np.zeros_like(y_meta_acc_val)
+            predicted_acc_test = np.zeros_like(y_meta_acc_test)
 
-        if xgb_model_mse_final:
-            predicted_mse_val_scaled = xgb_model_mse_final.predict(X_meta_val_processed)
-            predicted_mse_val = scaler_mse.inverse_transform(predicted_mse_val_scaled.reshape(-1, 1)).ravel()
-            predicted_mse_test_scaled = xgb_model_mse_final.predict(
-                X_meta_test_processed
-            )
-            predicted_mse_test = scaler_mse.inverse_transform(predicted_mse_test_scaled.reshape(-1, 1)).ravel()
-        else:
-            predicted_mse_val = np.zeros_like(y_meta_mse_val)
-            predicted_mse_test = np.zeros_like(y_meta_mse_test)
-
-        if xgb_model_rmse_final:
-            predicted_rmse_val_scaled = xgb_model_rmse_final.predict(
+        if xgb_model_precision_final:
+            predicted_precision_val = xgb_model_precision_final.predict(
                 X_meta_val_processed
             )
-            predicted_rmse_val = scaler_rmse.inverse_transform(predicted_rmse_val_scaled.reshape(-1, 1)).ravel()
-            predicted_rmse_test_scaled = xgb_model_rmse_final.predict(
+            predicted_precision_test = xgb_model_precision_final.predict(
                 X_meta_test_processed
             )
-            predicted_rmse_test = scaler_rmse.inverse_transform(predicted_rmse_test_scaled.reshape(-1, 1)).ravel()
         else:
-            predicted_rmse_val = np.zeros_like(y_meta_rmse_val)
-            predicted_rmse_test = np.zeros_like(y_meta_rmse_test)
+            predicted_precision_val = np.zeros_like(y_meta_precision_val)
+            predicted_precision_test = np.zeros_like(y_meta_precision_test)
 
-        if xgb_model_r2_final:
-            predicted_r2_val_scaled = xgb_model_r2_final.predict(
+        if xgb_model_recall_final:
+            predicted_recall_val = xgb_model_recall_final.predict(
                 X_meta_val_processed
             )
-            predicted_r2_val = scaler_r2.inverse_transform(predicted_r2_val_scaled.reshape(-1, 1)).ravel()
-            predicted_r2_test_scaled = xgb_model_r2_final.predict(
+            predicted_recall_test = xgb_model_recall_final.predict(
                 X_meta_test_processed
             )
-            predicted_r2_test = scaler_r2.inverse_transform(predicted_r2_test_scaled.reshape(-1, 1)).ravel()
         else:
-            predicted_r2_val = np.zeros_like(y_meta_r2_val)
-            predicted_r2_test = np.zeros_like(y_meta_r2_test)
+            predicted_recall_val = np.zeros_like(y_meta_recall_val)
+            predicted_recall_test = np.zeros_like(y_meta_recall_test)
+
+        if xgb_model_f1_final:
+            predicted_f1_val = xgb_model_f1_final.predict(X_meta_val_processed)
+            predicted_f1_test = xgb_model_f1_final.predict(
+                X_meta_test_processed
+            )
+        else:
+            predicted_f1_val = np.zeros_like(y_meta_f1_val)
+            predicted_f1_test = np.zeros_like(y_meta_f1_test)
+
+        if xgb_model_auc_final:
+            predicted_auc_val = xgb_model_auc_final.predict(
+                X_meta_val_processed
+            )
+            predicted_auc_test = xgb_model_auc_final.predict(
+                X_meta_test_processed
+            )
+        else:
+            predicted_auc_val = np.zeros_like(y_meta_auc_val)
+            predicted_auc_test = np.zeros_like(y_meta_auc_test)
 
         # Create DataFrames for predictions
         predictions_val_df = meta_dataset_val.copy()
-        predictions_val_df["predicted_mae"] = predicted_mae_val
-        predictions_val_df["predicted_mse"] = predicted_mse_val
-        predictions_val_df["predicted_rmse"] = predicted_rmse_val
-        predictions_val_df["predicted_r2"] = predicted_r2_val
+        predictions_val_df["predicted_accuracy"] = predicted_acc_val
+        predictions_val_df["predicted_precision"] = predicted_precision_val
+        predictions_val_df["predicted_recall"] = predicted_recall_val
+        predictions_val_df["predicted_f1_score"] = predicted_f1_val
+        predictions_val_df["predicted_auc_roc"] = predicted_auc_val
 
         predictions_test_df = meta_dataset_test.copy()
-        predictions_test_df["predicted_mae"] = predicted_mae_test
-        predictions_test_df["predicted_mse"] = predicted_mse_test
-        predictions_test_df["predicted_rmse"] = predicted_rmse_test
-        predictions_test_df["predicted_r2"] = predicted_r2_test
+        predictions_test_df["predicted_accuracy"] = predicted_acc_test
+        predictions_test_df["predicted_precision"] = predicted_precision_test
+        predictions_test_df["predicted_recall"] = predicted_recall_test
+        predictions_test_df["predicted_f1_score"] = predicted_f1_test
+        predictions_test_df["predicted_auc_roc"] = predicted_auc_test
 
         # Print out comparison of predicted metrics and real metrics
         logging.info(
@@ -501,14 +534,16 @@ class MetaLearningPipeline:
                 [
                     "dataset_name",
                     "model_name",
-                    "mae_val",
-                    "predicted_mae",
-                    "mse_val",
-                    "predicted_mse",
-                    "rmse_val",
-                    "predicted_rmse",
-                    "r2_val",
-                    "predicted_r2",
+                    "accuracy",
+                    "predicted_accuracy",
+                    "precision",
+                    "predicted_precision",
+                    "recall",
+                    "predicted_recall",
+                    "f1_score",
+                    "predicted_f1_score",
+                    "auc_roc",
+                    "predicted_auc_roc",
                 ]
             ]
         )
@@ -521,14 +556,16 @@ class MetaLearningPipeline:
                 [
                     "dataset_name",
                     "model_name",
-                    "mae_test",
-                    "predicted_mae",
-                    "mse_test",
-                    "predicted_mse",
-                    "rmse_test",
-                    "predicted_rmse",
-                    "r2_test",
-                    "predicted_r2",
+                    "accuracy",
+                    "predicted_accuracy",
+                    "precision",
+                    "predicted_precision",
+                    "recall",
+                    "predicted_recall",
+                    "f1_score",
+                    "predicted_f1_score",
+                    "auc_roc",
+                    "predicted_auc_roc",
                 ]
             ]
         )
@@ -561,130 +598,167 @@ class MetaLearningPipeline:
         # Evaluate meta-model performance
         logging.info("\nEvaluating the meta-models' performance.")
         # For validation set
-        predictions_val_df["mae_abs_error"] = abs(
-            predictions_val_df["predicted_mae"] - predictions_val_df["mae_val"]
+        predictions_val_df["acc_abs_error"] = abs(
+            predictions_val_df["predicted_accuracy"]
+            - predictions_val_df["accuracy"]
         )
-        predictions_val_df["mse_abs_error"] = abs(
-            predictions_val_df["predicted_mse"] - predictions_val_df["mse_val"]
+        predictions_val_df["precision_abs_error"] = abs(
+            predictions_val_df["predicted_precision"]
+            - predictions_val_df["precision"]
         )
-        predictions_val_df["rmse_abs_error"] = abs(
-            predictions_val_df["predicted_rmse"] - predictions_val_df["rmse_val"]
+        predictions_val_df["recall_abs_error"] = abs(
+            predictions_val_df["predicted_recall"]
+            - predictions_val_df["recall"]
         )
-        predictions_val_df["r2_abs_error"] = abs(
-            predictions_val_df["predicted_r2"] - predictions_val_df["r2_val"]
+        predictions_val_df["f1_abs_error"] = abs(
+            predictions_val_df["predicted_f1_score"]
+            - predictions_val_df["f1_score"]
+        )
+        predictions_val_df["auc_abs_error"] = abs(
+            predictions_val_df["predicted_auc_roc"]
+            - predictions_val_df["auc_roc"]
         )
 
         # For test set
-        predictions_test_df["mae_abs_error"] = abs(
-            predictions_test_df["predicted_mae"] - predictions_test_df["mae_test"]
+        predictions_test_df["acc_abs_error"] = abs(
+            predictions_test_df["predicted_accuracy"]
+            - predictions_test_df["accuracy"]
         )
-        predictions_test_df["mse_abs_error"] = abs(
-            predictions_test_df["predicted_mse"] - predictions_test_df["mse_test"]
+        predictions_test_df["precision_abs_error"] = abs(
+            predictions_test_df["predicted_precision"]
+            - predictions_test_df["precision"]
         )
-        predictions_test_df["rmse_abs_error"] = abs(
-            predictions_test_df["predicted_rmse"] - predictions_test_df["rmse_test"]
+        predictions_test_df["recall_abs_error"] = abs(
+            predictions_test_df["predicted_recall"]
+            - predictions_test_df["recall"]
         )
-        predictions_test_df["r2_abs_error"] = abs(
-            predictions_test_df["predicted_r2"] - predictions_test_df["r2_test"]
+        predictions_test_df["f1_abs_error"] = abs(
+            predictions_test_df["predicted_f1_score"]
+            - predictions_test_df["f1_score"]
+        )
+        predictions_test_df["auc_abs_error"] = abs(
+            predictions_test_df["predicted_auc_roc"]
+            - predictions_test_df["auc_roc"]
         )
 
-        # Calculate mean absolute errors
-        mean_mae_abs_error_val_final = predictions_val_df[
-            "mae_abs_error"
+        mean_acc_abs_error_val_final = predictions_val_df[
+            "acc_abs_error"
         ].mean()
-        mean_mse_abs_error_val_final = predictions_val_df[
-            "mse_abs_error"
+        mean_precision_abs_error_val_final = predictions_val_df[
+            "precision_abs_error"
         ].mean()
-        mean_rmse_abs_error_val_final = predictions_val_df[
-            "rmse_abs_error"
+        mean_recall_abs_error_val_final = predictions_val_df[
+            "recall_abs_error"
         ].mean()
-        mean_r2_abs_error_val_final = predictions_val_df[
-            "r2_abs_error"
-        ].mean()
-
-        mean_mae_abs_error_test_final = predictions_test_df[
-            "mae_abs_error"
-        ].mean()
-        mean_mse_abs_error_test_final = predictions_test_df[
-            "mse_abs_error"
-        ].mean()
-        mean_rmse_abs_error_test_final = predictions_test_df[
-            "rmse_abs_error"
-        ].mean()
-        mean_r2_abs_error_test_final = predictions_test_df[
-            "r2_abs_error"
+        mean_f1_abs_error_val_final = predictions_val_df["f1_abs_error"].mean()
+        mean_auc_abs_error_val_final = predictions_val_df[
+            "auc_abs_error"
         ].mean()
 
+        mean_acc_abs_error_test_final = predictions_test_df[
+            "acc_abs_error"
+        ].mean()
+        mean_precision_abs_error_test_final = predictions_test_df[
+            "precision_abs_error"
+        ].mean()
+        mean_recall_abs_error_test_final = predictions_test_df[
+            "recall_abs_error"
+        ].mean()
+        mean_f1_abs_error_test_final = predictions_test_df[
+            "f1_abs_error"
+        ].mean()
+        mean_auc_abs_error_test_final = predictions_test_df[
+            "auc_abs_error"
+        ].mean()
+
         logging.info(
-            f"\nMean Absolute Error of MAE Meta-Model on Validation Set: {mean_mae_abs_error_val_final:.4f}"
+            f"\nMean Absolute Error of Accuracy Meta-Model on Validation Set: {mean_acc_abs_error_val_final:.4f}"
         )
         logging.info(
-            f"Mean Absolute Error of MSE Meta-Model on Validation Set: {mean_mse_abs_error_val_final:.4f}"
+            f"Mean Absolute Error of Precision Meta-Model on Validation Set: {mean_precision_abs_error_val_final:.4f}"
         )
         logging.info(
-            f"Mean Absolute Error of RMSE Meta-Model on Validation Set: {mean_rmse_abs_error_val_final:.4f}"
+            f"Mean Absolute Error of Recall Meta-Model on Validation Set: {mean_recall_abs_error_val_final:.4f}"
         )
         logging.info(
-            f"Mean Absolute Error of R2 Meta-Model on Validation Set: {mean_r2_abs_error_val_final:.4f}"
+            f"Mean Absolute Error of F1-Score Meta-Model on Validation Set: {mean_f1_abs_error_val_final:.4f}"
         )
         logging.info(
-            f"Mean Absolute Error of MAE Meta-Model on Test Set: {mean_mae_abs_error_test_final:.4f}"
+            f"Mean Absolute Error of AUC-ROC Meta-Model on Validation Set: {mean_auc_abs_error_val_final:.4f}"
         )
         logging.info(
-            f"Mean Absolute Error of MSE Meta-Model on Test Set: {mean_mse_abs_error_test_final:.4f}"
+            f"Mean Absolute Error of Accuracy Meta-Model on Test Set: {mean_acc_abs_error_test_final:.4f}"
         )
         logging.info(
-            f"Mean Absolute Error of RMSE Meta-Model on Test Set: {mean_rmse_abs_error_test_final:.4f}"
+            f"Mean Absolute Error of Precision Meta-Model on Test Set: {mean_precision_abs_error_test_final:.4f}"
         )
         logging.info(
-            f"Mean Absolute Error of R2 Meta-Model on Test Set: {mean_r2_abs_error_test_final:.4f}"
+            f"Mean Absolute Error of Recall Meta-Model on Test Set: {mean_recall_abs_error_test_final:.4f}"
+        )
+        logging.info(
+            f"Mean Absolute Error of F1-Score Meta-Model on Test Set: {mean_f1_abs_error_test_final:.4f}"
+        )
+        logging.info(
+            f"Mean Absolute Error of AUC-ROC Meta-Model on Test Set: {mean_auc_abs_error_test_final:.4f}"
         )
 
         # Log evaluation metrics
         self.mlflow_manager.log_metric(
-            "mean_mae_abs_error_val_final", mean_mae_abs_error_val_final
+            "mean_acc_abs_error_val_final", mean_acc_abs_error_val_final
         )
         self.mlflow_manager.log_metric(
-            "mean_mse_abs_error_val_final", mean_mse_abs_error_val_final
+            "mean_precision_abs_error_val_final",
+            mean_precision_abs_error_val_final,
         )
         self.mlflow_manager.log_metric(
-            "mean_rmse_abs_error_val_final", mean_rmse_abs_error_val_final
+            "mean_recall_abs_error_val_final", mean_recall_abs_error_val_final
         )
         self.mlflow_manager.log_metric(
-            "mean_r2_abs_error_val_final", mean_r2_abs_error_val_final
+            "mean_f1_abs_error_val_final", mean_f1_abs_error_val_final
         )
         self.mlflow_manager.log_metric(
-            "mean_mae_abs_error_test_final", mean_mae_abs_error_test_final
+            "mean_auc_abs_error_val_final", mean_auc_abs_error_val_final
         )
         self.mlflow_manager.log_metric(
-            "mean_mse_abs_error_test_final", mean_mse_abs_error_test_final
+            "mean_acc_abs_error_test_final", mean_acc_abs_error_test_final
         )
         self.mlflow_manager.log_metric(
-            "mean_rmse_abs_error_test_final", mean_rmse_abs_error_test_final
+            "mean_precision_abs_error_test_final",
+            mean_precision_abs_error_test_final,
         )
         self.mlflow_manager.log_metric(
-            "mean_r2_abs_error_test_final", mean_r2_abs_error_test_final
+            "mean_recall_abs_error_test_final",
+            mean_recall_abs_error_test_final,
+        )
+        self.mlflow_manager.log_metric(
+            "mean_f1_abs_error_test_final", mean_f1_abs_error_test_final
+        )
+        self.mlflow_manager.log_metric(
+            "mean_auc_abs_error_test_final", mean_auc_abs_error_test_final
         )
 
         # Save mean absolute errors to a CSV file
         mean_errors = {
             "metric": [
-                "mae",
-                "mse",
-                "rmse",
-                "r2",
+                "accuracy",
+                "precision",
+                "recall",
+                "f1_score",
+                "auc_roc",
             ],
             "mean_abs_error_val": [
-                mean_mae_abs_error_val_final,
-                mean_mse_abs_error_val_final,
-                mean_rmse_abs_error_val_final,
-                mean_r2_abs_error_val_final,
+                mean_acc_abs_error_val_final,
+                mean_precision_abs_error_val_final,
+                mean_recall_abs_error_val_final,
+                mean_f1_abs_error_val_final,
+                mean_auc_abs_error_val_final,
             ],
             "mean_abs_error_test": [
-                mean_mae_abs_error_test_final,
-                mean_mse_abs_error_test_final,
-                mean_rmse_abs_error_test_final,
-                mean_r2_abs_error_test_final,
+                mean_acc_abs_error_test_final,
+                mean_precision_abs_error_test_final,
+                mean_recall_abs_error_test_final,
+                mean_f1_abs_error_test_final,
+                mean_auc_abs_error_test_final,
             ],
         }
 
@@ -711,7 +785,7 @@ class MetaLearningPipeline:
         )
 
         # Metrics to compare
-        metrics = ["mae", "mse", "rmse", "r2"]
+        metrics = ["accuracy", "precision", "recall", "f1_score", "auc_roc"]
 
         # Iterate through each dataset
         for dataset in combined_df["dataset_name"].unique():
@@ -724,7 +798,7 @@ class MetaLearningPipeline:
                 # Iterate through each metric
                 for metric in metrics:
                     # Prepare data
-                    actual_metric = f"{metric}_val" if split == "Validation" else f"{metric}_test"
+                    actual_metric = metric
                     predicted_metric = f"predicted_{metric}"
 
                     # Aggregate data: calculate mean actual and predicted metrics per model
@@ -768,11 +842,7 @@ class MetaLearningPipeline:
                     # Add difference annotations
                     for idx, row in merged.iterrows():
                         diff = row[predicted_metric] - row[actual_metric]
-                        # For MAE, MSE, RMSE: lower is better; for R2: higher is better
-                        if metric == "r2":
-                            color = "green" if diff >= 0 else "red"
-                        else:
-                            color = "green" if diff <= 0 else "red"
+                        color = "green" if diff >= 0 else "red"
                         plt.text(
                             idx,
                             max(row[actual_metric], row[predicted_metric])
@@ -787,11 +857,11 @@ class MetaLearningPipeline:
 
                     # Customize the plot
                     plt.title(
-                        f"Actual vs Predicted {metric.upper()} for {dataset} ({split} Set)",
+                        f"Actual vs Predicted {metric.capitalize()} for {dataset} ({split} Set)",
                         fontsize=16,
                     )
                     plt.xlabel("Model", fontsize=14)
-                    plt.ylabel(f"{metric.upper()}", fontsize=14)
+                    plt.ylabel(f"{metric.capitalize()}", fontsize=14)
                     plt.xticks(rotation=45, ha="right", fontsize=12)
                     plt.legend(title="Metric Type", fontsize=12)
                     plt.tight_layout()
@@ -807,22 +877,29 @@ class MetaLearningPipeline:
                     self.mlflow_manager.log_artifact(plot_filename)
 
                     logging.info(
-                        f"Actual vs Predicted {metric.upper()} comparison plot for {dataset} ({split} set) saved and logged to MLflow."
+                        f"Actual vs Predicted {metric.capitalize()} comparison plot for {dataset} ({split} set) saved and logged to MLflow."
                     )
 
-if __name__ == "__main__":
-    # Configure logging
-    os.makedirs("results", exist_ok=True)
-    logging.basicConfig(
-        level=logging.INFO,
-        format="%(asctime)s [%(levelname)s] %(message)s",
-        handlers=[
-            logging.StreamHandler(sys.stdout),
-            logging.FileHandler("results/meta_learning_pipeline.log"),
-        ],
-    )
 
+if __name__ == "__main__":
     try:
+        # Configure logging
+        os.makedirs("results", exist_ok=True)
+        logging.basicConfig(
+            level=logging.INFO,
+            format="%(asctime)s [%(levelname)s] %(message)s",
+            handlers=[
+                logging.StreamHandler(sys.stdout),
+                logging.FileHandler("results/meta_learning_pipeline.log"),
+            ],
+        )
+
+        # Suppress warnings
+        import warnings
+
+        warnings.filterwarnings("ignore")
+
+        # Initialize and start the pipeline
         pipeline = MetaLearningPipeline()
         pipeline.start()
     except Exception as e:

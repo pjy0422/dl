@@ -9,3 +9,16 @@ vae/mlruns/*
 meta/binary_classification/mlartifacts/*
 meta/binary_classification/mlruns/*
 meta/binary_classification/creditcard.csv
+meta/binary_classification/figures/*
+meta/binary_classification/results/*
+meta/binary_classification/__pycache__/*
+meta/multiclass_classification/__pycache__/*
+meta/multiclass_classification/figures/*
+meta/multiclass_classification/results/*
+meta/multiclass_classification/mlartifacts/*
+meta/multiclass_classification/mlruns/*
+meta/regression/__pycache__/*
+meta/regression/figures/*
+meta/regression/results/*
+meta/regression/mlartifacts/*
+meta/regression/mlruns/*
