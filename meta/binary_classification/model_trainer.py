@@ -4,11 +4,7 @@ import logging
 import os
 import sys
 
-import catboost as cb
-import lightgbm as lgb
 import mlflow
-import mlflow.catboost
-import mlflow.lightgbm
 import mlflow.sklearn
 import mlflow.xgboost
 import numpy as np

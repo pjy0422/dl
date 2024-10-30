@@ -7,11 +7,7 @@ import subprocess
 import sys
 import time
 
-import catboost as cb
-import lightgbm as lgb
 import mlflow
-import mlflow.catboost
-import mlflow.lightgbm
 import mlflow.sklearn
 import mlflow.xgboost
 from xgboost import XGBClassifier, XGBRegressor
@@ -105,22 +101,7 @@ class MLflowManager:
                 ),
             ):
                 mlflow.xgboost.log_model(model, artifact_path)
-            elif isinstance(
-                model,
-                (
-                    lgb.LGBMClassifier,
-                    lgb.LGBMRegressor,
-                ),
-            ):
-                mlflow.lightgbm.log_model(model, artifact_path)
-            elif isinstance(
-                model,
-                (
-                    cb.CatBoostClassifier,
-                    cb.CatBoostRegressor,
-                ),
-            ):
-                mlflow.catboost.log_model(model, artifact_path)
+
             else:
                 mlflow.sklearn.log_model(model, artifact_path)
             logging.info(f"Logged model: {artifact_path}")

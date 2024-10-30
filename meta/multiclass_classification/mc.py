@@ -656,7 +656,7 @@ class MetaModelManager:
             y_train,
             cv=3,  # Reduced number of folds for speed
             scoring="neg_mean_absolute_error",
-            n_jobs=-1,
+            n_jobs=4,
         )
         error_train = -cv_scores.mean()
 
@@ -704,7 +704,7 @@ class MetaLearningPipeline:
                 max_iter=200,
                 solver="lbfgs",
                 multi_class="multinomial",
-                n_jobs=-1,
+                n_jobs=4,
             ),
             "Random Forest": RandomForestClassifier(
                 n_estimators=100,
@@ -713,7 +713,7 @@ class MetaLearningPipeline:
                 min_samples_leaf=1,
                 bootstrap=True,
                 random_state=42,
-                n_jobs=-1,
+                n_jobs=4,
             ),
             "Decision Tree": DecisionTreeClassifier(
                 criterion="gini",
@@ -724,7 +724,7 @@ class MetaLearningPipeline:
                 random_state=42,
             ),
             "K-Nearest Neighbors": KNeighborsClassifier(
-                n_neighbors=5, algorithm="auto", leaf_size=30, p=2, n_jobs=-1
+                n_neighbors=5, algorithm="auto", leaf_size=30, p=2, n_jobs=4
             ),
             "AdaBoost": AdaBoostClassifier(
                 n_estimators=50, learning_rate=1.0, random_state=42
@@ -736,7 +736,7 @@ class MetaLearningPipeline:
                 max_features=1.0,
                 bootstrap=True,
                 random_state=42,
-                n_jobs=-1,
+                n_jobs=4,
             ),
             "Stacking Classifier": StackingClassifier(
                 estimators=[
@@ -746,11 +746,11 @@ class MetaLearningPipeline:
                             n_estimators=10, random_state=42
                         ),
                     ),
-                    ("knn", KNeighborsClassifier(n_neighbors=3, n_jobs=-1)),
+                    ("knn", KNeighborsClassifier(n_neighbors=3, n_jobs=4)),
                 ],
                 final_estimator=LogisticRegression(),
                 cv=5,
-                n_jobs=-1,
+                n_jobs=4,
             ),
             # "XGBoost": XGBClassifier(
             #     use_label_encoder=False,
@@ -770,19 +770,19 @@ class MetaLearningPipeline:
                             max_iter=200,
                             solver="lbfgs",
                             multi_class="multinomial",
-                            n_jobs=-1,
+                            n_jobs=4,
                         ),
                     ),
                     (
                         "rf",
                         RandomForestClassifier(
-                            n_estimators=100, random_state=42, n_jobs=-1
+                            n_estimators=100, random_state=42, n_jobs=4
                         ),
                     ),
-                    ("knn", KNeighborsClassifier(n_neighbors=5, n_jobs=-1)),
+                    ("knn", KNeighborsClassifier(n_neighbors=5, n_jobs=4)),
                 ],
                 voting="soft",  # Set to "hard" for majority voting or "soft" for probability-based voting
-                n_jobs=-1,  # Utilize all available cores
+                n_jobs=4,  # Utilize all available cores
             ),
         }
 
