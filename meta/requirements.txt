@@ -9,3 +9,5 @@ pymfe
 xgboost
 keras
 tensorflow
+xlrd
+openpyxl
