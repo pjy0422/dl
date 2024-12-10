@@ -1242,6 +1242,28 @@ class MetaLearningPipeline:
             "\nTest predictions saved to 'results/meta_model_predictions_test.csv' and logged to MLflow."
         )
 
+        predictions_test_df_copy = predictions_test_df.copy()
+        predictions_test_df_copy = predictions_test_df_copy[
+            ["dataset_name", "model_name", "accuracy", "predicted_accuracy"]
+        ]
+        predictions_test_df_copy = predictions_test_df_copy.pivot(
+            index="model_name",
+            columns="dataset_name",
+            values=["accuracy", "predicted_accuracy"],
+        )
+        predictions_test_df_copy.columns = (
+            predictions_test_df_copy.columns.swaplevel(0, 1)
+        )
+        predictions_test_df_copy = predictions_test_df_copy.sort_index(
+            axis=1, level=0
+        )
+        predictions_test_df_copy.columns.names = ["Dataset", "Metric"]
+        predictions_test_df_copy.to_csv("results/pivot.csv")
+        self.mlflow_manager.log_artifact("results/pivot.csv")
+        logging.info(
+            "\nTest predictions saved to 'results/pivot.csv' and logged to MLflow."
+        )
+
         # Plot and log comparisons
         self.plot_and_log_comparisons(predictions_val_df, predictions_test_df)
 

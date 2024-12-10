@@ -1235,6 +1235,7 @@ class MetaLearningPipeline:
         predictions_test_df.to_csv(
             "results/meta_model_predictions_test.csv", index=False
         )
+
         self.mlflow_manager.log_artifact(
             "results/meta_model_predictions_test.csv"
         )
@@ -1358,6 +1359,27 @@ class MetaLearningPipeline:
             "\nMean absolute errors saved to 'results/meta_model_mean_errors.csv'."
         )
         self.mlflow_manager.log_artifact("results/meta_model_mean_errors.csv")
+        df = pd.read_csv("results/meta_model_predictions_test.csv")
+        df = df[
+            ["dataset_name", "model_name", "accuracy", "predicted_accuracy"]
+        ]
+        df = df.pivot(
+            index="model_name",
+            columns="dataset_name",
+            values=["accuracy", "predicted_accuracy"],
+        )
+
+        # Swap and sort the MultiIndex levels
+        df.columns = df.columns.swaplevel(0, 1)
+        df = df.sort_index(axis=1, level=0)
+        df.columns.names = ["Dataset", "Metric"]
+        df.to_csv("results/meta_model_predictions_test_pivot.csv")
+        self.mlflow_manager.log_artifact(
+            "results/meta_model_predictions_test_pivot.csv"
+        )
+        logging.info(
+            "\nTest predictions pivoted and saved to 'results/meta_model_predictions_test_pivot.csv'."
+        )
 
         # End MLflow run
         self.mlflow_manager.end_run()

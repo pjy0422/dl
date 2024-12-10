@@ -10,6 +10,7 @@ from datetime import datetime
 import matplotlib
 
 matplotlib.use("Agg")
+import joblib
 import matplotlib.pyplot as plt
 import mlflow
 import mlflow.sklearn
@@ -17,7 +18,6 @@ import mlflow.xgboost
 import numpy as np
 import pandas as pd
 import seaborn as sns
-import joblib
 from pymfe.mfe import MFE
 from scipy.stats import entropy, kurtosis, skew
 from sklearn.base import clone
@@ -33,11 +33,7 @@ from sklearn.ensemble import (
 from sklearn.feature_selection import mutual_info_regression
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LinearRegression
-from sklearn.metrics import (
-    mean_absolute_error,
-    mean_squared_error,
-    r2_score,
-)
+from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.model_selection import (
     RandomizedSearchCV,
     cross_val_score,
@@ -147,9 +143,7 @@ class MLflowManager:
         try:
             if isinstance(
                 model,
-                (
-                    XGBRegressor,
-                ),
+                (XGBRegressor,),
             ):
                 mlflow.xgboost.log_model(model, artifact_path)
             else:
@@ -194,7 +188,9 @@ class DatasetLoader:
             )
             X_concrete = concrete.drop("CompressiveStrength", axis=1)
             y_concrete = concrete["CompressiveStrength"]
-            self.datasets.append(("Concrete Compressive Strength", X_concrete, y_concrete))
+            self.datasets.append(
+                ("Concrete Compressive Strength", X_concrete, y_concrete)
+            )
             print("Concrete Compressive Strength dataset loaded successfully.")
         except Exception as e:
             print(f"Error loading Concrete Compressive Strength dataset: {e}")
@@ -215,14 +211,19 @@ class DatasetLoader:
                 "Heating_Load",
                 "Cooling_Load",
             ]
-            energy = pd.read_excel(energy_url, header=0, names=energy_column_names)
+            energy = pd.read_excel(
+                energy_url, header=0, names=energy_column_names
+            )
             X_energy = energy.drop(["Heating_Load", "Cooling_Load"], axis=1)
-            y_energy = energy["Heating_Load"]  # Choose "Heating_Load" or "Cooling_Load" as needed
-            self.datasets.append(("Energy Efficiency Heating", X_energy, y_energy))
+            y_energy = energy[
+                "Heating_Load"
+            ]  # Choose "Heating_Load" or "Cooling_Load" as needed
+            self.datasets.append(
+                ("Energy Efficiency Heating", X_energy, y_energy)
+            )
             print("Energy Efficiency dataset loaded successfully.")
         except Exception as e:
             print(f"Error loading Energy Efficiency dataset: {e}")
-
 
     def load_auto_mpg(self):
         print("Loading Auto MPG dataset...")
@@ -240,7 +241,10 @@ class DatasetLoader:
                 "car_name",
             ]
             auto = pd.read_csv(
-                auto_url, delim_whitespace=True, names=auto_columns, na_values="?"
+                auto_url,
+                delim_whitespace=True,
+                names=auto_columns,
+                na_values="?",
             )
             auto.dropna(inplace=True)
             auto = auto.drop("car_name", axis=1)
@@ -273,9 +277,13 @@ class ModelTrainer:
     def preprocess(self, X):
         # Handle categorical variables
         if isinstance(X, pd.DataFrame):
-            categorical_cols = X.select_dtypes(include=["object", "category"]).columns
+            categorical_cols = X.select_dtypes(
+                include=["object", "category"]
+            ).columns
             if len(categorical_cols) > 0:
-                X = pd.get_dummies(X, columns=categorical_cols, drop_first=True)
+                X = pd.get_dummies(
+                    X, columns=categorical_cols, drop_first=True
+                )
         # Impute missing values
         X_imputed = self.imputer.fit_transform(X)
         # Scale features
@@ -851,10 +859,12 @@ class MetaLearningPipeline:
         # Prepare data for meta-models
         # Separate dataset meta-features and model_name
         X_meta_val = meta_dataset_val.drop(
-            ["dataset_name", "mae_val", "mse_val", "rmse_val", "r2_val"], axis=1
+            ["dataset_name", "mae_val", "mse_val", "rmse_val", "r2_val"],
+            axis=1,
         )
         X_meta_test = meta_dataset_test.drop(
-            ["dataset_name", "mae_test", "mse_test", "rmse_test", "r2_test"], axis=1
+            ["dataset_name", "mae_test", "mse_test", "rmse_test", "r2_test"],
+            axis=1,
         )
 
         # One-Hot Encode model names
@@ -919,15 +929,31 @@ class MetaLearningPipeline:
         scaler_r2 = StandardScaler()
 
         # Fit scalers on validation set and transform both validation and test sets
-        y_meta_mae_val_scaled = scaler_mae.fit_transform(y_meta_mae_val.reshape(-1, 1)).ravel()
-        y_meta_mse_val_scaled = scaler_mse.fit_transform(y_meta_mse_val.reshape(-1, 1)).ravel()
-        y_meta_rmse_val_scaled = scaler_rmse.fit_transform(y_meta_rmse_val.reshape(-1, 1)).ravel()
-        y_meta_r2_val_scaled = scaler_r2.fit_transform(y_meta_r2_val.reshape(-1, 1)).ravel()
+        y_meta_mae_val_scaled = scaler_mae.fit_transform(
+            y_meta_mae_val.reshape(-1, 1)
+        ).ravel()
+        y_meta_mse_val_scaled = scaler_mse.fit_transform(
+            y_meta_mse_val.reshape(-1, 1)
+        ).ravel()
+        y_meta_rmse_val_scaled = scaler_rmse.fit_transform(
+            y_meta_rmse_val.reshape(-1, 1)
+        ).ravel()
+        y_meta_r2_val_scaled = scaler_r2.fit_transform(
+            y_meta_r2_val.reshape(-1, 1)
+        ).ravel()
 
-        y_meta_mae_test_scaled = scaler_mae.transform(y_meta_mae_test.reshape(-1, 1)).ravel()
-        y_meta_mse_test_scaled = scaler_mse.transform(y_meta_mse_test.reshape(-1, 1)).ravel()
-        y_meta_rmse_test_scaled = scaler_rmse.transform(y_meta_rmse_test.reshape(-1, 1)).ravel()
-        y_meta_r2_test_scaled = scaler_r2.transform(y_meta_r2_test.reshape(-1, 1)).ravel()
+        y_meta_mae_test_scaled = scaler_mae.transform(
+            y_meta_mae_test.reshape(-1, 1)
+        ).ravel()
+        y_meta_mse_test_scaled = scaler_mse.transform(
+            y_meta_mse_test.reshape(-1, 1)
+        ).ravel()
+        y_meta_rmse_test_scaled = scaler_rmse.transform(
+            y_meta_rmse_test.reshape(-1, 1)
+        ).ravel()
+        y_meta_r2_test_scaled = scaler_r2.transform(
+            y_meta_r2_test.reshape(-1, 1)
+        ).ravel()
 
         # Save scalers
         logging.info("Saving and logging scalers...")
@@ -1028,22 +1054,32 @@ class MetaLearningPipeline:
             predicted_mae_val_scaled = xgb_model_mae_final.predict(
                 X_meta_val_processed
             )
-            predicted_mae_val = scaler_mae.inverse_transform(predicted_mae_val_scaled.reshape(-1, 1)).ravel()
+            predicted_mae_val = scaler_mae.inverse_transform(
+                predicted_mae_val_scaled.reshape(-1, 1)
+            ).ravel()
             predicted_mae_test_scaled = xgb_model_mae_final.predict(
                 X_meta_test_processed
             )
-            predicted_mae_test = scaler_mae.inverse_transform(predicted_mae_test_scaled.reshape(-1, 1)).ravel()
+            predicted_mae_test = scaler_mae.inverse_transform(
+                predicted_mae_test_scaled.reshape(-1, 1)
+            ).ravel()
         else:
             predicted_mae_val = np.zeros_like(y_meta_mae_val)
             predicted_mae_test = np.zeros_like(y_meta_mae_test)
 
         if xgb_model_mse_final:
-            predicted_mse_val_scaled = xgb_model_mse_final.predict(X_meta_val_processed)
-            predicted_mse_val = scaler_mse.inverse_transform(predicted_mse_val_scaled.reshape(-1, 1)).ravel()
+            predicted_mse_val_scaled = xgb_model_mse_final.predict(
+                X_meta_val_processed
+            )
+            predicted_mse_val = scaler_mse.inverse_transform(
+                predicted_mse_val_scaled.reshape(-1, 1)
+            ).ravel()
             predicted_mse_test_scaled = xgb_model_mse_final.predict(
                 X_meta_test_processed
             )
-            predicted_mse_test = scaler_mse.inverse_transform(predicted_mse_test_scaled.reshape(-1, 1)).ravel()
+            predicted_mse_test = scaler_mse.inverse_transform(
+                predicted_mse_test_scaled.reshape(-1, 1)
+            ).ravel()
         else:
             predicted_mse_val = np.zeros_like(y_meta_mse_val)
             predicted_mse_test = np.zeros_like(y_meta_mse_test)
@@ -1052,11 +1088,15 @@ class MetaLearningPipeline:
             predicted_rmse_val_scaled = xgb_model_rmse_final.predict(
                 X_meta_val_processed
             )
-            predicted_rmse_val = scaler_rmse.inverse_transform(predicted_rmse_val_scaled.reshape(-1, 1)).ravel()
+            predicted_rmse_val = scaler_rmse.inverse_transform(
+                predicted_rmse_val_scaled.reshape(-1, 1)
+            ).ravel()
             predicted_rmse_test_scaled = xgb_model_rmse_final.predict(
                 X_meta_test_processed
             )
-            predicted_rmse_test = scaler_rmse.inverse_transform(predicted_rmse_test_scaled.reshape(-1, 1)).ravel()
+            predicted_rmse_test = scaler_rmse.inverse_transform(
+                predicted_rmse_test_scaled.reshape(-1, 1)
+            ).ravel()
         else:
             predicted_rmse_val = np.zeros_like(y_meta_rmse_val)
             predicted_rmse_test = np.zeros_like(y_meta_rmse_test)
@@ -1065,11 +1105,15 @@ class MetaLearningPipeline:
             predicted_r2_val_scaled = xgb_model_r2_final.predict(
                 X_meta_val_processed
             )
-            predicted_r2_val = scaler_r2.inverse_transform(predicted_r2_val_scaled.reshape(-1, 1)).ravel()
+            predicted_r2_val = scaler_r2.inverse_transform(
+                predicted_r2_val_scaled.reshape(-1, 1)
+            ).ravel()
             predicted_r2_test_scaled = xgb_model_r2_final.predict(
                 X_meta_test_processed
             )
-            predicted_r2_test = scaler_r2.inverse_transform(predicted_r2_test_scaled.reshape(-1, 1)).ravel()
+            predicted_r2_test = scaler_r2.inverse_transform(
+                predicted_r2_test_scaled.reshape(-1, 1)
+            ).ravel()
         else:
             predicted_r2_val = np.zeros_like(y_meta_r2_val)
             predicted_r2_test = np.zeros_like(y_meta_r2_test)
@@ -1163,7 +1207,8 @@ class MetaLearningPipeline:
             predictions_val_df["predicted_mse"] - predictions_val_df["mse_val"]
         )
         predictions_val_df["rmse_abs_error"] = abs(
-            predictions_val_df["predicted_rmse"] - predictions_val_df["rmse_val"]
+            predictions_val_df["predicted_rmse"]
+            - predictions_val_df["rmse_val"]
         )
         predictions_val_df["r2_abs_error"] = abs(
             predictions_val_df["predicted_r2"] - predictions_val_df["r2_val"]
@@ -1171,16 +1216,20 @@ class MetaLearningPipeline:
 
         # For test set
         predictions_test_df["mae_abs_error"] = abs(
-            predictions_test_df["predicted_mae"] - predictions_test_df["mae_test"]
+            predictions_test_df["predicted_mae"]
+            - predictions_test_df["mae_test"]
         )
         predictions_test_df["mse_abs_error"] = abs(
-            predictions_test_df["predicted_mse"] - predictions_test_df["mse_test"]
+            predictions_test_df["predicted_mse"]
+            - predictions_test_df["mse_test"]
         )
         predictions_test_df["rmse_abs_error"] = abs(
-            predictions_test_df["predicted_rmse"] - predictions_test_df["rmse_test"]
+            predictions_test_df["predicted_rmse"]
+            - predictions_test_df["rmse_test"]
         )
         predictions_test_df["r2_abs_error"] = abs(
-            predictions_test_df["predicted_r2"] - predictions_test_df["r2_test"]
+            predictions_test_df["predicted_r2"]
+            - predictions_test_df["r2_test"]
         )
 
         # Calculate mean absolute errors
@@ -1193,9 +1242,7 @@ class MetaLearningPipeline:
         mean_rmse_abs_error_val_final = predictions_val_df[
             "rmse_abs_error"
         ].mean()
-        mean_r2_abs_error_val_final = predictions_val_df[
-            "r2_abs_error"
-        ].mean()
+        mean_r2_abs_error_val_final = predictions_val_df["r2_abs_error"].mean()
 
         mean_mae_abs_error_test_final = predictions_test_df[
             "mae_abs_error"
@@ -1291,7 +1338,27 @@ class MetaLearningPipeline:
             "\nMean absolute errors saved to 'results/meta_model_mean_errors.csv'."
         )
         self.mlflow_manager.log_artifact("results/meta_model_mean_errors.csv")
+        df = pd.read_csv("results/meta_model_predictions_test.csv")
+        df = df[
+            ["dataset_name", "model_name", "accuracy", "predicted_accuracy"]
+        ]
+        df = df.pivot(
+            index="model_name",
+            columns="dataset_name",
+            values=["accuracy", "predicted_accuracy"],
+        )
 
+        # Swap and sort the MultiIndex levels
+        df.columns = df.columns.swaplevel(0, 1)
+        df = df.sort_index(axis=1, level=0)
+        df.columns.names = ["Dataset", "Metric"]
+        df.to_csv("results/meta_model_predictions_test_pivot.csv")
+        self.mlflow_manager.log_artifact(
+            "results/meta_model_predictions_test_pivot.csv"
+        )
+        logging.info(
+            "\nTest predictions pivoted and saved to 'results/meta_model_predictions_test_pivot.csv'."
+        )
         # End MLflow run
         self.mlflow_manager.end_run()
 
@@ -1319,7 +1386,11 @@ class MetaLearningPipeline:
                 # Iterate through each metric
                 for metric in metrics:
                     # Prepare data
-                    actual_metric = f"{metric}_val" if split == "Validation" else f"{metric}_test"
+                    actual_metric = (
+                        f"{metric}_val"
+                        if split == "Validation"
+                        else f"{metric}_test"
+                    )
                     predicted_metric = f"predicted_{metric}"
 
                     # Aggregate data: calculate mean actual and predicted metrics per model
@@ -1371,7 +1442,8 @@ class MetaLearningPipeline:
                         plt.text(
                             idx,
                             max(row[actual_metric], row[predicted_metric])
-                            + 0.01 * max(row[actual_metric], row[predicted_metric]),
+                            + 0.01
+                            * max(row[actual_metric], row[predicted_metric]),
                             f"Δ: {diff:.2f}",
                             ha="center",
                             va="bottom",
